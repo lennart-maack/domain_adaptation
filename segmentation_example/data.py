@@ -11,8 +11,8 @@ class DataModuleSegmentation(pl.LightningDataModule):
         """
         Args:
             path_to_train (string): Path to the folder containing the folder to training images and corresponding training masks
-            path_to_train (string): Path to the folder containing the folder to test images and corresponding test masks
-            batch_size (int):
+            path_to_test (string): Path to the folder containing the folder to test images and corresponding test masks
+            batch_size (int): Batch size used for train, val, test, metrics calculation
         """
         super().__init__()
         self.path_to_train = path_to_train
