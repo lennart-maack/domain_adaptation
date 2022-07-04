@@ -4,7 +4,7 @@ from torch import nn
 import torch.nn.functional as F
 from pytorch_lightning import LightningModule
 
-from metrics import Dice_Coefficient
+from metrics.segmentation_metrics import Dice_Coefficient
 
 from torchvision import models
 from torchvision.models.segmentation.deeplabv3 import DeepLabHead
