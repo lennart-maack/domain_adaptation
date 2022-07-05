@@ -5,6 +5,7 @@ import os
 from torchvision import transforms as TR
 
 import pytorch_lightning as pl
+from pytorch_lightning.trainer.supporters import CombinedLoader
 
 class DataModuleSegmentation(pl.LightningDataModule):
     def __init__(self, path_to_train_source, path_to_train_target, path_to_test = None, load_size = None, batch_size = 16):
@@ -41,10 +42,10 @@ class DataModuleSegmentation(pl.LightningDataModule):
 
     def train_dataloader(self):
 
-        loader_source = data.DataLoader(self.train_data_source, batch_size=self.batch_size)
-        loader_target = data.DataLoader(self.train_data_target, batch_size=self.batch_size)
+        loader_source = data.DataLoader(self.train_data_source, batch_size=self.batch_size, shuffle=True)
+        loader_target = data.DataLoader(self.train_data_target, batch_size=self.batch_size, shuffle=True)
 
-        loaders = {"loader_source: ": loader_source, "loader_target: ": loader_target}
+        loaders = CombinedLoader({"loader_source": loader_source, "loader_target": loader_target}, mode="min_size")
         return loaders
 
     def val_dataloader(self):
@@ -52,7 +53,7 @@ class DataModuleSegmentation(pl.LightningDataModule):
         loader_source = data.DataLoader(self.val_data_source, batch_size=self.batch_size)
         loader_target = data.DataLoader(self.val_data_target, batch_size=self.batch_size)
 
-        loaders = {"loader_source: ": loader_source, "loader_target: ": loader_target}
+        loaders = CombinedLoader({"loader_source": loader_source, "loader_target": loader_target}, mode="min_size")
         return loaders
 
     def test_dataloader(self):
