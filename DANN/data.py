@@ -8,7 +8,7 @@ import pytorch_lightning as pl
 from pytorch_lightning.trainer.supporters import CombinedLoader
 
 class DataModuleSegmentation(pl.LightningDataModule):
-    def __init__(self, path_to_train_source, path_to_train_target, path_to_test = None, load_size = None, batch_size = 16):
+    def __init__(self, path_to_train_source, path_to_train_target, batch_size, path_to_test = None, load_size = None):
         """
         Args:
             path_to_train (string): Path to the folder containing the folder to training images and corresponding training masks
@@ -32,10 +32,10 @@ class DataModuleSegmentation(pl.LightningDataModule):
         self.train_data_source, self.val_data_source = data.random_split(train_data_source, [train_set_size, val_set_size])
 
         # setup target data
-        train_data_target = CustomDataset(self.path_to_train_target, load_size=self.load_size)
-        train_set_size = int(len(train_data_target) * 0.8)
-        val_set_size = len(train_data_target) - train_set_size
-        self.train_data_target, self.val_data_target = data.random_split(train_data_target, [train_set_size, val_set_size])
+        self.train_data_target = CustomDataset(self.path_to_train_target, load_size=self.load_size)
+        # train_set_size = int(len(train_data_target) * 0.8)
+        # val_set_size = len(train_data_target) - train_set_size
+        # self.train_data_target, self.val_data_target = data.random_split(train_data_target, [train_set_size, val_set_size])
         
         if self.path_to_test is not None:
             self.test_data = CustomDataset(self.path_to_test, load_size=self.load_size)
@@ -51,10 +51,10 @@ class DataModuleSegmentation(pl.LightningDataModule):
     def val_dataloader(self):
 
         loader_source = data.DataLoader(self.val_data_source, batch_size=self.batch_size)
-        loader_target = data.DataLoader(self.val_data_target, batch_size=self.batch_size)
+        # loader_target = data.DataLoader(self.val_data_target, batch_size=self.batch_size)
 
-        loaders = CombinedLoader({"loader_source": loader_source, "loader_target": loader_target}, mode="min_size")
-        return loaders
+        # loaders = CombinedLoader({"loader_source": loader_source, "loader_target": loader_target}, mode="min_size")
+        return loader_source
 
     def test_dataloader(self):
         return data.DataLoader(self.val_data, batch_size=self.batch_size)
