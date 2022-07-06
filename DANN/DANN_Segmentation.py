@@ -125,16 +125,19 @@ class Domain_Classifier(nn.Module):
 
 
 class DANN_Network(pl.LightningModule):
-    def __init__(self, max_epochs):
+    def __init__(self, max_epochs, batch_size):
         super().__init__()
         self.lr = 1e-3
         self.max_epochs = max_epochs
+        self.batch_size = batch_size
         self.dice_coeff = Dice_Coefficient()
         self.encoder = Encoder()
         self.decoder = Decoder()
         self.domain_classifier = Domain_Classifier()
 
         self.pooling = nn.AdaptiveAvgPool2d((1,1))
+
+        self.loss_domain = torch.nn.NLLLoss()
 
     def forward(self, input_data, alpha=2):
         # encoding
@@ -166,11 +169,30 @@ class DANN_Network(pl.LightningModule):
         p = float(batch_idx + self.current_epoch * self.trainer.num_training_batches) / self.max_epochs / self.trainer.num_training_batches
         alpha = 2. / (1. + np.exp(-10 * p)) - 1
 
-        img, mask = batch_source
+        # training model using source data
+        img_source, mask_source = batch_source
+        domain_label_source = torch.zeros(img_source.size()[0]).long().cuda()
 
-        seg_mask_out, domain_output = self(img, alpha)
+        seg_mask_out_source, domain_output_source = self(img_source, alpha)
 
-        loss = F.binary_cross_entropy_with_logits(seg_mask_out, mask)
+        err_mask_source = F.binary_cross_entropy_with_logits(seg_mask_out_source, mask_source)
+        err_domain_source = self.loss_domain(domain_output_source, domain_label_source)
+
+        # training model using target data
+        img_target, _ = batch_target
+
+        domain_label_target = torch.ones(img_target.size()[0]).long().cuda()
+
+        _ , domain_output_target = self(img_target, alpha)
+
+        err_domain_target = self.loss_domain(domain_output_target, domain_label_target)
+
+        loss = err_mask_source + err_domain_source + err_domain_target
+
+        self.log('Error Masks Source - Training', err_mask_source, prog_bar=True)
+        self.log('Error Domain Source - Training', err_domain_source, prog_bar=True)
+        self.log('Error Domain Target - Training', err_domain_target, prog_bar=True)
+        self.log('Loss - Training', loss, prog_bar=True)
 
         return loss
 
@@ -181,9 +203,7 @@ class DANN_Network(pl.LightningModule):
         source data with labels
         """
 
-        batch_source = batch["loader_source"]
-
-        img, mask = batch_source
+        img, mask = batch
 
         seg_out, domain_output = self(img)
 
