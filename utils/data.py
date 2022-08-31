@@ -63,8 +63,8 @@ class DataModuleSegmentation(pl.LightningDataModule):
     def train_dataloader(self):
 
         if self.domain_adaptation:
-            loader_source = data.DataLoader(self.train_data_source, batch_size=self.batch_size, shuffle=True, num_workers=2)
-            loader_target = data.DataLoader(self.train_data_target, batch_size=self.batch_size, shuffle=True, num_workers=2)
+            loader_source = data.DataLoader(self.train_data_source, batch_size=self.batch_size, shuffle=True, num_workers=2, drop_last=True) # drop_last=True is needed to calculate the FFT for FDA properly
+            loader_target = data.DataLoader(self.train_data_target, batch_size=self.batch_size, shuffle=True, num_workers=2, drop_last=True) # drop_last=True is needed to calculate the FFT for FDA properly
 
             loaders = CombinedLoader({"loader_source": loader_source, "loader_target": loader_target}, mode="min_size")
             return loaders
@@ -108,9 +108,9 @@ class CustomDataset(torch.utils.data.Dataset):
             [
                 A.ToFloat(),
                 # A.MedianBlur(p=0.1),
-                A.RandomBrightnessContrast(brightness_limit=0.3, contrast_limit=0.3, brightness_by_max=True, p=0.7),
+                # A.RandomBrightnessContrast(brightness_limit=0.3, contrast_limit=0.3, brightness_by_max=True, p=0.7),
                 # A.HueSaturationValue(p=0.5),
-                A.Flip(p=0.6),
+                # A.Flip(p=0.6),
                 # # A.Rotate(p=0.5),
                 # A.ElasticTransform(p=0.3),
                 # # A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
