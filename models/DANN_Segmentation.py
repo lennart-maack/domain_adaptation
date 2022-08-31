@@ -227,7 +227,7 @@ class DANN_Network(pl.LightningModule):
         # Log loss, metric and domain output
         self.log('Validation Loss - Source Data', loss_val, prog_bar=True, on_epoch=True)
         self.log('Dice Score - Source Data', curr_mean_dice, prog_bar=True,on_epoch=True)
-        self.log('Domain Output - Source Data', domain_output, prog_bar=True, on_epoch=True)
+        # self.log('Domain Output - Source Data', domain_output, prog_bar=True, on_epoch=True)
 
         img, mask = batch_target
 
