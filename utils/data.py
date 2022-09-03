@@ -15,7 +15,7 @@ from albumentations.pytorch import ToTensorV2
 
 
 class DataModuleSegmentation(pl.LightningDataModule):
-    def __init__(self, path_to_train_source=None, path_to_train_target=None, path_to_test=None, domain_adaptation=False, batch_size=16, load_size=None):
+    def __init__(self, path_to_train_source=None, path_to_train_target=None, path_to_test=None, path_to_predict=None, domain_adaptation=False, batch_size=16, load_size: int = None):
         """
         Args:
             path_to_train_source (string): Path to the folder containing the folder to training images and corresponding training masks - source
@@ -24,7 +24,7 @@ class DataModuleSegmentation(pl.LightningDataModule):
             domain_adaptation (bool): If the DataModuleSegmentation is used as input for a domain_adaptation network (need of source
                 AND target train data, whereas domain_adaptation=False does only need one training dataset (either target or train))
             batch_size (int): Batch size used for train, val, test, metrics calculation
-            load_size (tuple:(int,int)): Size to which the images are rescaled
+            load_size (int): Size to which the images are rescaled - will be squared image
         """
         super().__init__()
 
@@ -34,10 +34,17 @@ class DataModuleSegmentation(pl.LightningDataModule):
         self.path_to_train_target = path_to_train_target
 
         self.path_to_test = path_to_test
+        self.path_to_predict = path_to_predict
+
         self.load_size = load_size
         self.batch_size = batch_size
 
     def setup(self, stage=None):
+
+        # path_to_predict must only be not None if you want to use a model + DataLoader for inference
+        if self.path_to_predict is not None:
+            self.predict_data = CustomDataset(self.path_to_predict, transfo_for_train=False, load_size=self.load_size)
+            return
 
         # Need of a source and target dataset when using a domain_adaptation model
         if self.domain_adaptation:
@@ -88,6 +95,12 @@ class DataModuleSegmentation(pl.LightningDataModule):
         loader_target_test = data.DataLoader(self.test_data, batch_size=self.batch_size, num_workers=2)
 
         return loader_target_test
+
+    def predict_dataloader(self):
+
+        loader_predict = data.DataLoader(self.predict_data, batch_size=self.batch_size, shuffle=False, num_workers=2)
+
+        return loader_predict
 
 
 class CustomDataset(torch.utils.data.Dataset):
