@@ -35,6 +35,11 @@ class FDA_first_train(pl.LightningModule):
 
     def forward(self, x):
 
+        B, _, H, W = x.shape
+        mean_img = self.IMG_MEAN.repeat(B,1,H,W).cuda()
+
+        x = x.clone() - mean_img
+
         return self.net(x)
 
     def configure_optimizers(self):
@@ -58,23 +63,23 @@ class FDA_first_train(pl.LightningModule):
 
         # 2. substract mean
 
-        B, _, H, W = img_source.shape
-        mean_img = self.IMG_MEAN.repeat(B,1,H,W).cuda()
+        # B, _, H, W = img_source.shape
+        # mean_img = self.IMG_MEAN.repeat(B,1,H,W).cuda()
 
-        src_img = src_in_trg.clone() - mean_img
-        trg_img = img_target.clone() - mean_img
+        # src_img = src_in_trg.clone() - mean_img
+        # trg_img = img_target.clone() - mean_img
 
         #----------------------------------------------------------------------------------------#
 
         # 3. send src and trg image batches to the model
-        out = self(src_img)
+        out = self(src_in_trg)
 
         # 4. Compute the Binary cross entropy loss for source image with target style
         loss_seg = F.binary_cross_entropy_with_logits(out, mask_source)
 
         # 5. Compute the Entropy Loss from the target image
         ## Is it needed to calculate softmax etc. if it is 1 class only anyway? --> I apply sigmoid here/Have a look on how the out values look like!!
-        out = self(trg_img) # shape of out is: B, 1 (N_Classes), 256 (H), 256 (W)
+        out = self(img_target) # shape of out is: B, 1 (N_Classes), 256 (H), 256 (W)
         # P = F.softmax(out, dim=1)        # [B, 19, H, W] (from paper), in our case: [B, 1, H, W] 
         P = F.sigmoid(out)
         # logP = F.log_softmax(out, dim=1) # [B, 19, H, W] (from paper), in our case: [B, 1, H, W]
@@ -129,7 +134,7 @@ class FDA_first_train(pl.LightningModule):
 
         img, mask = batch
 
-        seg_out, _ = self(img)
+        seg_out = self(img)
 
         dice_coeff_values = self.dice_coeff(seg_out, mask)
         curr_mean_dice = torch.mean(dice_coeff_values[:, -2], dim=0)
@@ -137,6 +142,19 @@ class FDA_first_train(pl.LightningModule):
         self.log("FINAL Dice Score on Target Test Data", curr_mean_dice, on_epoch=True, prog_bar=True, sync_dist=True)
 
         return {"curr_mean_dice": curr_mean_dice}
+
+    def predict_step(self, batch, batch_idx):
+        
+        img, mask = batch
+
+        seg_out = self(img)
+
+        dice_coeff_values = self.dice_coeff(seg_out, mask)
+        curr_mean_dice = torch.mean(dice_coeff_values[:, -2], dim=0)
+
+        print(curr_mean_dice)
+
+        return seg_out
 
 
 class UNet_baseline(FDA_first_train):
@@ -154,6 +172,71 @@ class UNet_baseline(FDA_first_train):
         out = self(img_source)
         loss = F.binary_cross_entropy_with_logits(out, mask_source)
 
+        self.log('Overall Loss', loss, prog_bar=True)
+
+        return loss
+
+
+class FDA_self_supervised(FDA_first_train):
+
+
+    def training_step(self, batch, batch_nb):
+        
+        # 0. Load images as batches
+        batch_source = batch["loader_source"]
+        batch_target = batch["loader_target"]
+
+        img_source, mask_source = batch_source
+        img_target, mask_target = batch_target # mask target is the batch of created pseudo labels
+
+        #----------------------------------------------------------------------------------------#
+        # 1. transforming the source image to the target style as in FDA by Yang et al. 
+        src_in_trg = FDA_source_to_target(img_source, img_target, L=self.LB)
+
+        # 2. substract mean
+
+        # B, _, H, W = img_source.shape
+        # mean_img = self.IMG_MEAN.repeat(B,1,H,W).cuda()
+
+        # src_img = src_in_trg.clone() - mean_img
+        # trg_img = img_target.clone() - mean_img
+
+        #----------------------------------------------------------------------------------------#
+
+        # 3. send src_in_trg image batches to the model
+        out = self(src_in_trg)
+
+        # 3.1 send target image to the model
+        out_target = self(img_target)
+
+        # 4. Compute the Binary cross entropy loss for source image with target style
+        loss_seg_source = F.binary_cross_entropy_with_logits(out, mask_source)
+
+        # 4.1 Compute Binary cross entropy loss for target image with pseudo labels
+        loss_seg_target = F.binary_cross_entropy_with_logits(out_target, mask_target)
+
+        # 5. Compute the Entropy Loss from the target image
+        ## Is it needed to calculate softmax etc. if it is 1 class only anyway? --> I apply sigmoid here/Have a look on how the out values look like!!
+        out = self(img_target) # shape of out is: B, 1 (N_Classes), 256 (H), 256 (W)
+        # P = F.softmax(out, dim=1)        # [B, 19, H, W] (from paper), in our case: [B, 1, H, W] 
+        P = F.sigmoid(out)
+        # logP = F.log_softmax(out, dim=1) # [B, 19, H, W] (from paper), in our case: [B, 1, H, W]
+        logP = F.logsigmoid(out)
+        PlogP = P * logP               # [B, 19, H, W] (from paper), in our case: [B, 1, H, W]
+        ent = -1.0 * PlogP.sum(dim=1)  # [B, 1, H, W] (from paper)
+        # ent = ent / 2.9444         # chanage when classes is not 19 (from paper), we leave out this line?? 
+        
+        # compute robust entropy/Charbonnier penalty function
+        ent = ent ** 2.0 + 1e-8
+        ent = ent ** self.eta
+        loss_ent = ent.mean()
+
+        # 6 Compute the overall loss
+        loss = loss_seg_source + self.entW * loss_ent + loss_seg_target
+
+        self.log('Binary Cross Entropy Loss Source Images', loss_seg_source, prog_bar=True)
+        self.log('Binary Cross Entropy Loss Target Images Pseudo Labels', loss_seg_target, prog_bar=True)
+        self.log('Entropy Loss Target Images', loss_ent, prog_bar=True)
         self.log('Overall Loss', loss, prog_bar=True)
 
         return loss
