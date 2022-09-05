@@ -12,7 +12,18 @@ from torchvision.utils import save_image
 
 import os
 
-def create_pseudo_labels_from_list_of_predictions(predictions_list, path_to_pseudo_label_folder):
+
+def get_image_names_list(path_to_predict_imgs):
+
+    path_img = os.path.join(path_to_predict_imgs, "images")
+    img_list = os.listdir(path_img)
+    img_list = [os.path.splitext(os.path.basename(filename))[0] for filename in img_list if ".png" in filename or ".jpg" in filename]
+    img_list = sorted(img_list, key=lambda x: float(x))
+
+    return img_list
+
+
+def create_pseudo_labels_from_list_of_predictions(predictions_list, path_to_pseudo_label_folder, path_to_predict_imgs):
     """
     Creates segmentation masks (pseudo labels) from predictions. For FDA, we create a segmentation mask from the mean of M model (M: number of segmentation models)
 
@@ -20,7 +31,10 @@ def create_pseudo_labels_from_list_of_predictions(predictions_list, path_to_pseu
     we use the mean of M model predicitions)
 
     """
-    counter_for_img_name = 0
+    images_names_list = get_image_names_list(path_to_predict_imgs)
+    images_names_list_counter = 0
+    print(images_names_list)
+
     if type(predictions_list[0]) == list:
     
         M = len(predictions_list)
@@ -43,40 +57,49 @@ def create_pseudo_labels_from_list_of_predictions(predictions_list, path_to_pseu
             pred_sigmoid = torch.sigmoid(prediction, out=None) 
             seg_mask_mini_batch = torch.round(pred_sigmoid)
             for seg_mask_id in range(seg_mask_mini_batch.shape[0]):
-                counter_for_img_name+=1
-                print(counter_for_img_name)
-                save_image(seg_mask_mini_batch[seg_mask_id], os.path.join(path_to_pseudo_label_folder, f"{counter_for_img_name}.png"))
+                print()
+                print(images_names_list[images_names_list_counter])
+                save_image(seg_mask_mini_batch[seg_mask_id], os.path.join(path_to_pseudo_label_folder, f"{images_names_list[images_names_list_counter]}.png"))
+                images_names_list_counter += 1
 
     else:
         
+        print(len(predictions_list))
         for prediction in predictions_list:
             pred_sigmoid = torch.sigmoid(prediction, out=None) 
             seg_mask_mini_batch = torch.round(pred_sigmoid)
             for seg_mask_id in range(seg_mask_mini_batch.shape[0]):
-                counter_for_img_name+=1
-                print(counter_for_img_name)
-                save_image(seg_mask_mini_batch[seg_mask_id], os.path.join(path_to_pseudo_label_folder, f"{counter_for_img_name}.png"))
+                print()
+                print(images_names_list[images_names_list_counter])
+                save_image(seg_mask_mini_batch[seg_mask_id], os.path.join(path_to_pseudo_label_folder, f"{images_names_list[images_names_list_counter]}.png"))
+                images_names_list_counter += 1
 
 def main(hparams):
 
-    model = FDA_first_train.load_from_checkpoint(hparams.path_to_checkpoint)
+    model_1 = FDA_first_train.load_from_checkpoint(hparams.path_to_checkpoint_model1)
+    model_2 = FDA_first_train.load_from_checkpoint(hparams.path_to_checkpoint_model2)
+    model_3 = FDA_first_train.load_from_checkpoint(hparams.path_to_checkpoint_model3)
 
     # call after training
     trainer = pl.Trainer(accelerator='gpu', devices=1)
 
-    predict_dataloader = DataModuleSegmentation(path_to_predict=hparams.path_to_predict_imgs_all, load_size=256)
+    predict_dataloader = DataModuleSegmentation(path_to_predict=hparams.path_to_predict_imgs, load_size=256)
 
-    predictions = trainer.predict(model, dataloaders=predict_dataloader)
+    predictions_1 = trainer.predict(model_1, dataloaders=predict_dataloader)
+    predictions_2 = trainer.predict(model_2, dataloaders=predict_dataloader)
+    predictions_3 = trainer.predict(model_3, dataloaders=predict_dataloader)
 
-    # predictions_list = [predictions,predictions,predictions]
+    predictions_list = [predictions_1,predictions_2,predictions_3]
 
-    create_pseudo_labels_from_list_of_predictions(predictions, hparams.path_to_pseudo_label_folder)
+    create_pseudo_labels_from_list_of_predictions(predictions_list, hparams.path_to_pseudo_label_folder, hparams.path_to_predict_imgs)
 
 if __name__ == "__main__":
 
     parser = ArgumentParser(add_help=False)
-    parser.add_argument("--path_to_predict_imgs_all", type=str)
-    parser.add_argument("--path_to_checkpoint", type=str)
+    parser.add_argument("--path_to_predict_imgs", type=str)
+    parser.add_argument("--path_to_checkpoint_model1", type=str)
+    parser.add_argument("--path_to_checkpoint_model2", type=str)
+    parser.add_argument("--path_to_checkpoint_model3", type=str)
     parser.add_argument("--path_to_pseudo_label_folder", type=str)
     hparams = parser.parse_args()
 
