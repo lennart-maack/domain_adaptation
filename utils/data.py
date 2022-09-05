@@ -15,7 +15,7 @@ from albumentations.pytorch import ToTensorV2
 
 
 class DataModuleSegmentation(pl.LightningDataModule):
-    def __init__(self, path_to_train_source=None, path_to_train_target=None, path_to_test=None, path_to_predict=None, domain_adaptation=False, batch_size=16, load_size: int = None):
+    def __init__(self, path_to_train_source=None, path_to_train_target=None, path_to_test=None, path_to_predict=None, domain_adaptation=False, pseudo_labels=False, batch_size=16, load_size: int = None):
         """
         Args:
             path_to_train_source (string): Path to the folder containing the folder to training images and corresponding training masks - source
@@ -23,6 +23,7 @@ class DataModuleSegmentation(pl.LightningDataModule):
             path_to_test (string): Path to the folder containing the folder to test images and corresponding test masks
             domain_adaptation (bool): If the DataModuleSegmentation is used as input for a domain_adaptation network (need of source
                 AND target train data, whereas domain_adaptation=False does only need one training dataset (either target or train))
+            pseudo_labels (bool): Set to true if for the target dataset, pseudo labels are used for training. "path_to_train_target" needs to contain a pseudo_labels subfolder.
             batch_size (int): Batch size used for train, val, test, metrics calculation
             load_size (int): Size to which the images are rescaled - will be squared image
         """
@@ -38,6 +39,8 @@ class DataModuleSegmentation(pl.LightningDataModule):
 
         self.load_size = load_size
         self.batch_size = batch_size
+
+        self.pseudo_labels = pseudo_labels
 
     def setup(self, stage=None):
 
@@ -55,7 +58,7 @@ class DataModuleSegmentation(pl.LightningDataModule):
             self.train_data_source, self.val_data_source = data.random_split(train_data_source, [train_set_size, val_set_size])
 
             # setup target data
-            self.train_data_target = CustomDataset(self.path_to_train_target, transfo_for_train=True, load_size=self.load_size)
+            self.train_data_target = CustomDataset(self.path_to_train_target, transfo_for_train=True, pseudo_labels=self.pseudo_labels, load_size=self.load_size)
         
         # Need of only one dataset when NOT using domain_adaptation model (e.g. U-Net) - it is called train_data_source
         else:
@@ -104,7 +107,7 @@ class DataModuleSegmentation(pl.LightningDataModule):
 
 
 class CustomDataset(torch.utils.data.Dataset):
-    def __init__(self, path, transfo_for_train, load_size = None):
+    def __init__(self, path, transfo_for_train, pseudo_labels=False, load_size = None):
         """
         Args:
             path (string): Path to the folder containing the folder to training images and corresponding training masks
@@ -112,7 +115,7 @@ class CustomDataset(torch.utils.data.Dataset):
         """
         self.path = path
         self.load_size = load_size
-        self.images, self.masks, self.paths = self.list_images()
+        self.images, self.masks, self.paths = self.list_images(pseudo_labels=pseudo_labels)
         self.transfo_for_train = transfo_for_train
 
         self.resize_transform = A.Resize(self.load_size, self.load_size)
@@ -144,9 +147,9 @@ class CustomDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
 
-        image = Image.open(os.path.join(self.paths[0], self.images[idx])).convert('RGB')
+        image = Image.open(os.path.join(self.paths[0], f'{self.images[idx]}.png')).convert('RGB') # if you get an error in this line, you might have .jpg images
         image = np.array(image)
-        mask = Image.open(os.path.join(self.paths[1], self.masks[idx])).convert("L")
+        mask = Image.open(os.path.join(self.paths[1], f'{self.masks[idx]}.png')).convert("L") # if you get an error in this line, you might have .jpg images
         mask = np.array(mask)
 
         image, mask = self.apply_transforms(image, mask)
@@ -156,16 +159,21 @@ class CustomDataset(torch.utils.data.Dataset):
 
         return (image, mask)
 
-    def list_images(self):
+    def list_images(self, pseudo_labels):
 
         path_img = os.path.join(self.path, "images") #, mode)
-        path_mask = os.path.join(self.path, "masks") #, mode)
+        if pseudo_labels:
+            path_mask = os.path.join(self.path, "pseudo_labels") #, mode)
+        else:
+            path_mask = os.path.join(self.path, "masks") #, mode)
         img_list = os.listdir(path_img)
         mask_list = os.listdir(path_mask)
-        img_list = [filename for filename in img_list if ".png" in filename or ".jpg" in filename]
-        mask_list = [filename for filename in mask_list if ".png" in filename or ".jpg" in filename]
-        images = sorted(img_list)
-        masks = sorted(mask_list)
+        # img_list = [filename for filename in img_list if ".png" in filename or ".jpg" in filename]
+        img_list = [os.path.splitext(os.path.basename(filename))[0] for filename in img_list if ".png" in filename or ".jpg" in filename]
+        # mask_list = [filename for filename in mask_list if ".png" in filename or ".jpg" in filename]
+        mask_list = [os.path.splitext(os.path.basename(filename))[0] for filename in mask_list if ".png" in filename or ".jpg" in filename]
+        images = sorted(img_list, key=lambda x: float(x))
+        masks = sorted(mask_list, key=lambda x: float(x))
         assert len(images)  == len(masks), "different len of images and masks %s - %s" % (len(images), len(masks))
         for i in range(len(images)):
             assert os.path.splitext(images[i])[0] == os.path.splitext(masks[i])[0], '%s and %s are not matching' % (images[i], masks[i])
