@@ -187,7 +187,7 @@ class FDA_self_supervised(FDA_first_train):
         batch_target = batch["loader_target"]
 
         img_source, mask_source = batch_source
-        img_target, mask_target = batch_target # mask target is the batch of created pseudo labels
+        img_target, mask_target = batch_target # mask_target is a batch of created pseudo labels
 
         #----------------------------------------------------------------------------------------#
         # 1. transforming the source image to the target style as in FDA by Yang et al. 
