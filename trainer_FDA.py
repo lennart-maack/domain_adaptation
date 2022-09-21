@@ -28,7 +28,7 @@ def main_FDA(hparams: Namespace):
         print("No correct model was chosen")
         raise SystemExit()
 
-    checkpoint_callback = ModelCheckpoint(save_top_k=2, dirpath=hparams.checkpoint_dir, monitor="Overall Loss", mode="min") # saves top-K checkpoint based on metric defined with monitor
+    checkpoint_callback = ModelCheckpoint(save_top_k=2, dirpath=hparams.checkpoint_dir, monitor="Validation Loss - Source Data", mode="min") # saves top-K checkpoint based on metric defined with monitor
 
     wandb_logger = WandbLogger(name=hparams.run_name, project=hparams.project_name, log_model="True")
     
