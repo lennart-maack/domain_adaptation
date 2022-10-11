@@ -1,0 +1,14 @@
+{
+    "run_name" : "eqw",
+    "project_name": "qwe",
+    "checkpoint_dir": "das",
+    "path_to_train": "G:/My Drive/Master_Thesis/Github/cocosubset",
+    "load_size": 256 ,
+    "test_data_path": null,
+    "max_epochs": 120,
+    "batch_size": 16,
+    "num_workers": 2,
+    "device": "cpu",
+    "debug": true,
+    "overfit_batches": 0.0
+}
