@@ -15,14 +15,17 @@ from albumentations.pytorch import ToTensorV2
 
 
 class DataModuleSegmentation(pl.LightningDataModule):
-    def __init__(self, path_to_train_source=None, path_to_train_target=None, path_to_test=None, path_to_predict=None, domain_adaptation=False, pseudo_labels=False, batch_size=16, load_size: int = None):
+    def __init__(self, path_to_train_source=None, path_to_train_target=None, path_to_test=None, path_to_predict=None, coarse_segmentation=None, domain_adaptation=False, pseudo_labels=False, batch_size=16, load_size: int = 256, num_workers=2):
         """
         Args:
             path_to_train_source (string): Path to the folder containing the folder to training images and corresponding training masks - source
             path_to_train_target (string): Path to the folder containing the folder to training images and corresponding training masks - target
             path_to_test (string): Path to the folder containing the folder to test images and corresponding test masks
-            domain_adaptation (bool): If the DataModuleSegmentation is used as input for a domain_adaptation network (need of source
-                AND target train data, whereas domain_adaptation=False does only need one training dataset (either target or train))
+            coarse_segmentation (int): If int is given, the dataloader of for path_to_train_source (needs to be extended to target, too)
+                returns image, coarse_segementation_gt (size: (int,int)), normal_segmentation_gt
+            domain_adaptation (bool): 
+                True: Ff the DataModuleSegmentation is used as input for a domain_adaptation network (need of source AND target train data), 
+                False: Does only need one training dataset (set only path_to_train_source)
             pseudo_labels (bool): Set to true if for the target dataset, pseudo labels are used for training. "path_to_train_target" needs to contain a pseudo_labels subfolder.
             batch_size (int): Batch size used for train, val, test, metrics calculation
             load_size (int): Size to which the images are rescaled - will be squared image
@@ -30,6 +33,7 @@ class DataModuleSegmentation(pl.LightningDataModule):
         super().__init__()
 
         self.domain_adaptation = domain_adaptation
+        self.coarse_segmentation = coarse_segmentation
 
         self.path_to_train_source = path_to_train_source
         self.path_to_train_target = path_to_train_target
@@ -41,6 +45,7 @@ class DataModuleSegmentation(pl.LightningDataModule):
         self.batch_size = batch_size
 
         self.pseudo_labels = pseudo_labels
+        self.num_workers = num_workers
 
     def setup(self, stage=None):
 
@@ -49,8 +54,14 @@ class DataModuleSegmentation(pl.LightningDataModule):
             self.predict_data = CustomDataset(self.path_to_predict, transfo_for_train=False, load_size=self.load_size)
             return
 
+        if self.coarse_segmentation is not None:
+            train_data_source = CustomDataset(self.path_to_train_source, transfo_for_train=True, load_size=self.load_size, coarse_segmentation=self.coarse_segmentation)
+            coarse_train_set_size = int(len(train_data_source) * 0.8)
+            coarse_val_set_size = len(train_data_source) - coarse_train_set_size
+            self.train_data_source, self.val_data_source = data.random_split(train_data_source, [coarse_train_set_size, coarse_val_set_size])
+
         # Need of a source and target dataset when using a domain_adaptation model
-        if self.domain_adaptation:
+        elif self.domain_adaptation:
             # setup source data
             train_data_source = CustomDataset(self.path_to_train_source, transfo_for_train=True, load_size=self.load_size)
             train_set_size = int(len(train_data_source) * 0.8)
@@ -73,52 +84,64 @@ class DataModuleSegmentation(pl.LightningDataModule):
     def train_dataloader(self):
 
         if self.domain_adaptation:
-            loader_source = data.DataLoader(self.train_data_source, batch_size=self.batch_size, shuffle=True, num_workers=2, drop_last=True) # drop_last=True is needed to calculate the FFT for FDA properly
-            loader_target = data.DataLoader(self.train_data_target, batch_size=self.batch_size, shuffle=True, num_workers=2, drop_last=True) # drop_last=True is needed to calculate the FFT for FDA properly
+            loader_source = data.DataLoader(self.train_data_source, batch_size=self.batch_size, shuffle=True, num_workers=self.num_workers, drop_last=True) # drop_last=True is needed to calculate the FFT for FDA properly
+            loader_target = data.DataLoader(self.train_data_target, batch_size=self.batch_size, shuffle=True, num_workers=self.num_workers, drop_last=True) # drop_last=True is needed to calculate the FFT for FDA properly
 
             loaders = CombinedLoader({"loader_source": loader_source, "loader_target": loader_target}, mode="min_size")
             return loaders
         
         else:
-            return data.DataLoader(self.train_data_source, batch_size=self.batch_size, shuffle=True, num_workers=2)
+            return data.DataLoader(self.train_data_source, batch_size=self.batch_size, shuffle=True, num_workers=self.num_workers)
 
 
     def val_dataloader(self):
 
-        loader_source = data.DataLoader(self.val_data_source, batch_size=self.batch_size, num_workers=2)
+        loader_source = data.DataLoader(self.val_data_source, batch_size=self.batch_size, num_workers=self.num_workers)
 
-        loader_target_test = data.DataLoader(self.test_data, batch_size=self.batch_size, num_workers=2)
+        if self.path_to_test is not None:
 
-        loaders = CombinedLoader({"loader_val_source": loader_source, "loader_target_test": loader_target_test}, mode="max_size_cycle")
-        
-        return loaders
+            loader_target_test = data.DataLoader(self.test_data, batch_size=self.batch_size, num_workers=self.num_workers)
+
+            loaders = CombinedLoader({"loader_val_source": loader_source, "loader_target_test": loader_target_test}, mode="max_size_cycle")
+            
+            return loaders
+
+        else:
+            return loader_source
 
     def test_dataloader(self):
 
-        loader_target_test = data.DataLoader(self.test_data, batch_size=self.batch_size, num_workers=2)
+        loader_target_test = data.DataLoader(self.test_data, batch_size=self.batch_size, num_workers=self.num_workers)
 
         return loader_target_test
 
     def predict_dataloader(self):
 
-        loader_predict = data.DataLoader(self.predict_data, batch_size=self.batch_size, shuffle=False, num_workers=2)
+        loader_predict = data.DataLoader(self.predict_data, batch_size=self.batch_size, shuffle=False, num_workers=self.num_workers)
 
         return loader_predict
 
 
 class CustomDataset(torch.utils.data.Dataset):
-    def __init__(self, path, transfo_for_train, pseudo_labels=False, load_size = None):
+    def __init__(self, path, transfo_for_train, pseudo_labels=False, load_size = 256, coarse_segmentation=None):
         """
         Args:
             path (string): Path to the folder containing the folder to training images and corresponding training masks
                 the folder need to have the unique names "images" and "masks"
+            coarse_segmentation (int): Height and Width of the downsampled segmentation mask
         """
+
         self.path = path
         self.load_size = load_size
         self.images, self.masks, self.paths = self.list_images(pseudo_labels=pseudo_labels)
+        self.image_postfix, self.mask_postfix = self.get_image_and_mask_postfix(self.paths)
+
         self.transfo_for_train = transfo_for_train
 
+        self.coarse_segmentation = coarse_segmentation 
+
         self.resize_transform = A.Resize(self.load_size, self.load_size)
+        self.create_coarse_seg_mask = A.Resize(self.coarse_segmentation, coarse_segmentation)
 
         self.train_transforms = A.Compose(
             [
@@ -147,27 +170,55 @@ class CustomDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
 
-        image = Image.open(os.path.join(self.paths[0], f'{self.images[idx]}.png')).convert('RGB') # if you get an error in this line, you might have .jpg images
+        image = Image.open(os.path.join(os.path.normpath(self.paths[0]), f'{self.images[idx]}{self.image_postfix}')).convert('RGB') # if you get an error in this line, you might have .jpg images
         image = np.array(image)
-        mask = Image.open(os.path.join(self.paths[1], f'{self.masks[idx]}.png')).convert("L") # if you get an error in this line, you might have .jpg images
+        mask = Image.open(os.path.join(os.path.normpath(self.paths[1]), f'{self.masks[idx]}{self.mask_postfix}')).convert("L") # if you get an error in this line, you might have .jpg images
         mask = np.array(mask)
 
-        image, mask = self.apply_transforms(image, mask)
-        mask = mask/255
-        mask = torch.round(mask)
-        mask = mask.view([1, mask.size()[0], mask.size()[1]])
+        if self.coarse_segmentation is not None:
+            image, mask, mask_coarse = self.apply_transforms(image, mask, coarse=True)
+            
+            mask = torch.from_numpy(mask)
+            mask = mask/255
+            mask = torch.round(mask)
+            mask = mask.view([1, mask.size()[0], mask.size()[1]])
 
-        return (image, mask)
+            mask_coarse = torch.from_numpy(mask_coarse)
+            mask_coarse = mask_coarse/255
+            mask_coarse = torch.round(mask_coarse)
+            mask_coarse = mask_coarse.view([1, mask_coarse.size()[0], mask_coarse.size()[1]])
+
+            return (image, mask, mask_coarse)
+
+        else:
+            image, mask = self.apply_transforms(image, mask)
+            mask = mask/255
+            mask = torch.round(mask)
+            mask = mask.view([1, mask.size()[0], mask.size()[1]])
+
+            return (image, mask)
+
+    def get_image_and_mask_postfix(self, paths):
+        
+        path_img, path_mask = paths
+        img_list = os.listdir(path_img)
+        mask_list = os.listdir(path_mask)
+        image_postfix = os.path.splitext(os.path.basename(img_list[0]))[1]
+        mask_postfix = os.path.splitext(os.path.basename(mask_list[0]))[1]
+
+        return image_postfix, mask_postfix
+
 
     def list_images(self, pseudo_labels):
 
-        path_img = os.path.join(self.path, "images") #, mode)
+        path_img = os.path.join(os.path.normpath(self.path), "images") #, mode)
         if pseudo_labels:
-            path_mask = os.path.join(self.path, "pseudo_labels") #, mode)
+            path_mask = os.path.join(os.path.normpath(self.path), "pseudo_labels") #, mode)
         else:
-            path_mask = os.path.join(self.path, "masks") #, mode)
+            path_mask = os.path.join(os.path.normpath(self.path), "masks") #, mode)
         img_list = os.listdir(path_img)
         mask_list = os.listdir(path_mask)
+
         # img_list = [filename for filename in img_list if ".png" in filename or ".jpg" in filename]
         img_list = [os.path.splitext(os.path.basename(filename))[0] for filename in img_list if ".png" in filename or ".jpg" in filename]
         # mask_list = [filename for filename in mask_list if ".png" in filename or ".jpg" in filename]
@@ -179,21 +230,38 @@ class CustomDataset(torch.utils.data.Dataset):
             assert os.path.splitext(images[i])[0] == os.path.splitext(masks[i])[0], '%s and %s are not matching' % (images[i], masks[i])
         return images, masks, (path_img, path_mask)
 
-    def apply_transforms(self, image, mask):
-                
+    def apply_transforms(self, image, mask, coarse=False):
+        
         if self.load_size is not None:
             resized_transformed = self.resize_transform(image=image, mask=mask)
             image = resized_transformed["image"]
             mask = resized_transformed["mask"]
+        if coarse:
+            coarse_transformed = self.create_coarse_seg_mask(image=image, mask=mask)
+            mask_coarse = coarse_transformed["mask"]
 
         if self.transfo_for_train:
-            transformed = self.train_transforms(image=image, mask=mask)
-            image = transformed["image"]
-            mask = transformed["mask"]
+            if coarse:
+                transformed = self.train_transforms(image=image, masks=[mask, mask_coarse])
+                image = transformed["image"]
+                mask, mask_coarse = transformed["masks"]
+            else:
+                transformed = self.train_transforms(image=image, mask=mask)
+                image = transformed["image"]
+                mask = transformed["mask"]
+                
+        else:
+            if coarse:
+                transformed = self.test_transforms(image=image, masks=[mask, mask_coarse])
+                image = transformed["image"]
+                mask, mask_coarse = transformed["masks"]
+            else:
+                transformed = self.test_transforms(image=image, mask=mask)
+                image = transformed["image"]
+                mask = transformed["mask"]
+
+        if coarse:
+            return image, mask, mask_coarse
 
         else:
-            transformed = self.test_transforms(image=image, mask=mask)
-            image = transformed["image"]
-            mask = transformed["mask"]
-
-        return image, mask
+            return image, mask
