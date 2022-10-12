@@ -12,13 +12,13 @@ from utils.data import DataModuleSegmentation
 
 def main(hparams: Namespace):
 
-    model = MainNetwork()
-
     dm = DataModuleSegmentation(path_to_train_source=hparams.path_to_train, load_size=256, coarse_segmentation=33, num_workers=hparams.num_workers)
 
     checkpoint_callback = ModelCheckpoint(save_top_k=2, dirpath=hparams.checkpoint_dir, monitor="Dice Score (Validation)", mode="max")
 
     wandb_logger = WandbLogger(name=hparams.run_name, project=hparams.project_name, log_model="True")
+
+    model = MainNetwork()
 
     trainer = pl.Trainer(callbacks=checkpoint_callback, accelerator=hparams.device, devices=1, logger=wandb_logger, max_epochs=hparams.max_epochs,
                         fast_dev_run=hparams.debug)
@@ -46,7 +46,7 @@ if __name__ == "__main__":
     parser.add_argument("--device", default='gpu', type=str, help="device to train on")
     parser.add_argument("--num_workers", default=2, type=int, help="num worker for dataloader")
     parser.add_argument("--debug", default=False, type=bool, help="If True, model is run in fast_dev_run (debug mode)")
-    parser.add_argument("--overfit_batches", default=0.0, help="Sanity check, takes single batch for training and tries to overfit (Other values can be chosen, check lightning docs")
+    parser.add_argument("--overfit_batches", default=0.2, help="Sanity check, takes single batch for training and tries to overfit (Other values can be chosen, check lightning docs")
     parser.add_argument('--load_json', default=None, help='Load settings from file in json format. Command line options override values in file.')
     hparams = parser.parse_args()
 
