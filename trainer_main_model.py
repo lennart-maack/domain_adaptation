@@ -9,8 +9,10 @@ from models.main_model import MainNetwork
 
 from utils.data import DataModuleSegmentation
 
+import wandb
 
-def main(hparams: Namespace):
+
+def main(hparams: Namespace, argparse_dict):
 
     dm = DataModuleSegmentation(path_to_train_source=hparams.path_to_train, load_size=256, coarse_segmentation=33, num_workers=hparams.num_workers)
 
@@ -24,6 +26,8 @@ def main(hparams: Namespace):
                         fast_dev_run=hparams.debug)
 
     wandb_logger.watch(model)
+
+    wandb.init(config=argparse_dict)
 
     trainer.fit(model, dm)
 
@@ -46,7 +50,7 @@ if __name__ == "__main__":
     parser.add_argument("--device", default='gpu', type=str, help="device to train on")
     parser.add_argument("--num_workers", default=2, type=int, help="num worker for dataloader")
     parser.add_argument("--debug", default=False, type=bool, help="If True, model is run in fast_dev_run (debug mode)")
-    parser.add_argument("--overfit_batches", default=0.2, help="Sanity check, takes single batch for training and tries to overfit (Other values can be chosen, check lightning docs")
+    parser.add_argument("--overfit_batches", default=0.0, help="Sanity check, takes single batch for training and tries to overfit (Other values can be chosen, check lightning docs")
     parser.add_argument('--load_json', default=None, help='Load settings from file in json format. Command line options override values in file.')
     hparams = parser.parse_args()
 
@@ -64,4 +68,4 @@ if __name__ == "__main__":
         # Create a namespace from the argparse_dict
         hparams = Namespace(**argparse_dict)
 
-    main(hparams)
+    main(hparams, argparse_dict)
