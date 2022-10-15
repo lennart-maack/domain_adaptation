@@ -121,6 +121,11 @@ class ResNetBackbone(object):
         self.resnet_models = ResNetModels()
         self.multi_grid = None # Multi Grid might be adapted for resnet34, 50, 101!! Use multi_grid=None for dilated ResNet18
 
+    def resnet18(self):
+        orig_resnet = self.resnet_models.resnet18()
+        arch_net = NormalResnetBackbone(orig_resnet)
+        arch_net.num_features = 512
+        return arch_net
 
     def deepbase_resnet18(self):
         orig_resnet = self.resnet_models.deepbase_resnet18()
