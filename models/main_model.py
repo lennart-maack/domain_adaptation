@@ -367,7 +367,7 @@ class MainNetwork(pl.LightningModule):
                 # Get the true images for logging
                 input_image = wandb.Image(F_vision.to_pil_image(img[idx]))
 
-                if self.current_epoch % 16 == 0 or self.current_epoch == 0: 
+                if self.current_epoch % 16 == 0 or self.current_epoch == 0:
                     df_tsne = create_tsne(feature_embedding, mask_coarse, pca_n_comp=100)
                     fig = plt.figure(figsize=(10,10))
                     sns_plot = sns.scatterplot(x="tsne-one", y="tsne-two", hue="label", data=df_tsne)
