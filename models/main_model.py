@@ -1,10 +1,14 @@
 import torch
 from torch import nn
 import torch.nn.functional as F
+import PIL
+import cv2
+import seaborn as sns
 
 import pytorch_lightning as pl
 
 from models.resnet.resnet_backbone import ResNetBackbone
+from utils.visualisation import create_tsne
 
 from torchmetrics import Dice
 
@@ -338,7 +342,7 @@ class MainNetwork(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
 
-        img, mask, mask_coarse = batch
+        img, mask, mask_coarse = batch # mask.size(): [bs, 1, 256, 256]
 
         segmentation_mask_prediction, coarse_output, feature_embedding = self(img)
 
@@ -363,6 +367,16 @@ class MainNetwork(pl.LightningModule):
                 # Get the true images for logging
                 input_image = wandb.Image(F_vision.to_pil_image(img[idx]))
 
+                if self.current_epoch % 16 == 0 or self.current_epoch == 0: 
+                    df_tsne = create_tsne(feature_embedding, mask_coarse, pca_n_comp=100)
+                    fig = plt.figure(figsize=(10,10))
+                    sns_plot = sns.scatterplot(x="tsne-one", y="tsne-two", hue="label", data=df_tsne)
+                    fig = sns_plot.get_figure()
+                    fig.savefig("tSNE_vis.jpg")
+                    img = cv2.imread("tSNE_vis.jpg")
+                    tSNE_image = wandb.Image(PIL.Image.fromarray(img))
+                else:
+                    tSNE_image = None
 
                 if self.coarse_prediction_type != "no_coarse":
                     # Get the coarse prediction output (normal and sigmoid) as wandb.Image for logging
@@ -379,7 +393,8 @@ class MainNetwork(pl.LightningModule):
                             f"Coarse Prediction Output Sigmoid {idx}": coarse_output_segmap_sigmoid,
                             # f"Prediction Output {idx}": output_image,
                             f"Prediction Output Sigmoid {idx}": output_segmap_sigmoid,
-                            f"Input image {idx}": input_image
+                            f"Input image {idx}": input_image,
+                            f"tSNE visualization {idx}": tSNE_image
                             })
                 else:
                     wandb.log({
@@ -389,7 +404,8 @@ class MainNetwork(pl.LightningModule):
                             f"True Segmentation Mask {idx}": seg_mask,
                             # f"Prediction Output {idx}": output_image,
                             f"Prediction Output Sigmoid {idx}": output_segmap_sigmoid,
-                            f"Input image {idx}": input_image
+                            f"Input image {idx}": input_image,
+                            f"tSNE visualization {idx}": tSNE_image
                             })
 
         
