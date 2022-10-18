@@ -1,3 +1,4 @@
 *.pyc
 helper.ipynb
 /cocosubset
+/wandb
