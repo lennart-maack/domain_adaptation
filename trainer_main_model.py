@@ -16,11 +16,12 @@ def main(hparams: Namespace):
 
     dm = DataModuleSegmentation(path_to_train_source=hparams.path_to_train, load_size=256, coarse_segmentation=33, num_workers=hparams.num_workers)
 
-    checkpoint_callback = ModelCheckpoint(save_top_k=2, dirpath=hparams.checkpoint_dir, monitor="Dice Score (Validation)", mode="max")
+    checkpoint_callback = ModelCheckpoint(save_top_k=2, dirpath=hparams.checkpoint_dir, monitor="Coarse Dice Score (Validation)", mode="max")
 
     wandb_logger = WandbLogger(name=hparams.run_name, project=hparams.project_name, log_model="True")
 
-    model = MainNetwork(index_range=hparams.index_range, model_type=hparams.model_type, coarse_prediction_type=hparams.coarse_prediction_type, coarse_lambda=hparams.coarse_lambda)
+    model = MainNetwork(index_range=hparams.index_range, model_type=hparams.model_type, coarse_prediction_type=hparams.coarse_prediction_type, 
+                        coarse_lambda=hparams.coarse_lambda, contr_head_type=hparams.contr_head_type, using_full_decoder=hparams.using_full_decoder)
 
     trainer = pl.Trainer(callbacks=checkpoint_callback, accelerator=hparams.device, devices=1, logger=wandb_logger, max_epochs=hparams.max_epochs,
                         fast_dev_run=hparams.debug)
@@ -42,6 +43,8 @@ if __name__ == "__main__":
     parser.add_argument("--path_to_train", type=str, help="path where the training data is stored")
     parser.add_argument("--model_type", type=str, choices=["normal", "dilated"] , help="What type of model is used, either normal or dilated ResNet18")
     parser.add_argument("--coarse_prediction_type", type=str, choices=["no_coarse", "linear", "mlp"], help="which type of coarse prediction should be used")
+    parser.add_argument("--contr_head_type", type=str, default="no_contr_head", choices=["no_contr_head", "contr_head_1", "contr_head_2", "contr_head_3", "contr_head_4"], help="which type of contr head is used to create the feature vector fead into contrastive loss")
+    parser.add_argument("--using_full_decoder", action='store_true', help="If a true a normal encoder is used (encoding to original seg mask size, if false no normal encoder is used")
 
     # All arguments with default arguments
     parser.add_argument("--coarse_lambda", type=float, default=1.0, help="Coefficient used for the coarse loss in the overall loss")
