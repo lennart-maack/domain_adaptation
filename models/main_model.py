@@ -10,7 +10,7 @@ import pytorch_lightning as pl
 
 from models.resnet.resnet_backbone import ResNetBackbone
 from utils.visualisation import create_tsne
-from utils.losses import SupConLoss
+from utils.losses import PixelContrastLoss
 
 from torchmetrics import Dice
 
@@ -258,69 +258,59 @@ class Contrastive_Head(nn.Module):
     def __init__(
                 self,
                 dim_in,
+                proj_dim=256,
                 head_type=None,
     ):
         super().__init__()
 
         if head_type == "contr_head_1":
             self.contr_head = nn.Sequential(
-                    nn.Conv2d(dim_in, 128, kernel_size=1, stride=1, padding=0),
+                    nn.Conv2d(dim_in, dim_in, kernel_size=1),
                     nn.ReLU(inplace=True),
-                    nn.Conv2d(128, 32, kernel_size=1, stride=1, padding=0),
-                    nn.ReLU(inplace=True),
-                    nn.Conv2d(32, 1, kernel_size=1, stride=1, padding=0)
+                    nn.Conv2d(dim_in, proj_dim, kernel_size=1),
                 )
         else:
-            raise ValueError(head_type, " is not implemented yet")
+            raise ValueError(head_type, "is not implemented yet")
 
     def forward(self, feature_embedding):
 
-        feature_vec_size = feature_embedding.size()[-1]*feature_embedding.size()[-2]
         x = self.contr_head(feature_embedding)
-        x = x.view(feature_embedding.size()[0], feature_vec_size)
 
         return (F.normalize(x, p=2, dim=1))
-
 
 class MainNetwork(pl.LightningModule):
     def __init__(
                 self,
-                index_range, # defines the indices (range from first idx to last idx) that are used for logging/visualizing seg_masks/predictions/feature_maps in a mini batch during validation
-                model_type,
-                coarse_prediction_type,
-                coarse_lambda,
-                using_full_decoder,
-                contr_head_type,
-                temperature=0.7,
-                lr=1e-3
+                wandb_configs
     ):
         super().__init__()
-        
-        self.using_full_decoder = using_full_decoder
-        self.contr_head_type = contr_head_type
 
-        self.lr = lr
+        self.using_full_decoder = wandb_configs.using_full_decoder
+        self.contr_head_type = wandb_configs.contr_head_type
+
+        self.lr = wandb_configs.lr
         self.coarse_seg_metric = Dice()
         self.seg_metric = Dice()
-        self.sup_contr_loss = SupConLoss(temperature=temperature)
-        
+        self.sup_contr_loss = PixelContrastLoss(temperature=wandb_configs.temperature, base_temperature=wandb_configs.base_temperature, max_samples=wandb_configs.max_samples, max_views=wandb_configs.max_views)
+        self.visualize_tsne = wandb_configs.visualize_tsne
+
         ##########################################################
         # Set the resNet Backbone + full Decoder
         self.resnet_backbones = ResNetBackbone()
-        if model_type == "dilated":
+        if wandb_configs.model_type == "dilated":
             print("Using a dilated ResNet18 backbone", "\n")
             self.encoder = self.resnet_backbones.deepbase_resnet18_dilated8()
-            if using_full_decoder:
+            if wandb_configs.using_full_decoder:
                 print("Using full Decoder")
                 self.decoder = Dilated_Decoder()
             else:
                 print("Using no full Decoder")
                 self.decoder = None
 
-        elif model_type == "normal":
+        elif wandb_configs.model_type == "normal":
             print("Using a normal ResNet18 backbone", "\n")
             self.encoder = self.resnet_backbones.resnet18()
-            if using_full_decoder:
+            if wandb_configs.using_full_decoder:
                 print("Using full Decoder")
                 self.decoder = Normal_Decoder()
             else:
@@ -329,33 +319,35 @@ class MainNetwork(pl.LightningModule):
 
         ###########################################################
         # Setting the Coarse Prediction type (What is the architecture of the coarse prediction head)
-        if coarse_prediction_type == "linear":
+        if wandb_configs.coarse_prediction_type == "linear":
             print("Using a coarse Decoder with linear conv layer", "\n")
             self.coarse_decoder = Coarse_Decoder(self.encoder.num_features, coarse_decoder_type="linear")
 
-        elif coarse_prediction_type == "mlp":
+        elif wandb_configs.coarse_prediction_type == "mlp":
             print("Using a coarse Decoder with mlp layers", "\n")
             self.coarse_decoder = Coarse_Decoder(self.encoder.num_features, coarse_decoder_type="mlp")
 
         else:
             print("Using no coarse Decoder", "\n")
 
-        self.coarse_prediction_type = coarse_prediction_type
-        self.coarse_lambda = coarse_lambda
+        self.coarse_prediction_type = wandb_configs.coarse_prediction_type
+        self.coarse_lambda = wandb_configs.coarse_lambda
 
         ###########################################################
         # Choosing the contrastive head type to use
-        if contr_head_type == "no_contr_head":
-            print("print no contrastive head/loss")
+        if wandb_configs.contr_head_type == "no_contr_head":
+            print("Using No contrastive head/loss")
             self.contr_head = None
         else:
-            print("print contrastive head: ", contr_head_type)
-            self.contr_head = Contrastive_Head(512, contr_head_type)
+            print("Using contrastive head: ", wandb_configs.contr_head_type)
+            self.contr_head = Contrastive_Head(512, head_type=wandb_configs.contr_head_type)
+        
+        self.contrastive_lambda = wandb_configs.contrastive_lambda
+        self.use_coarse_outputs_for_contrastive = wandb_configs.use_coarse_outputs_for_contrastive
 
         ###########################################################
         # Index range which is used for the amount of images logged
-        self.index_range = list(range(index_range[0],index_range[1]+1))
-
+        self.index_range = list(range(wandb_configs.index_range[0],wandb_configs.index_range[1]+1))
 
     def forward(self, input_data):
 
@@ -393,44 +385,33 @@ class MainNetwork(pl.LightningModule):
         segmentation_mask_prediction, coarse_output, layer4_output = self(img)
 
         if self.using_full_decoder:
-            bce_loss = F.binary_cross_entropy_with_logits(segmentation_mask_prediction, mask)
-            self.log("Training Loss (Binary Cross Entropy)", bce_loss, prog_bar=True)
+            loss = F.binary_cross_entropy_with_logits(segmentation_mask_prediction, mask)
+            self.log("Training Loss (Binary Cross Entropy)", loss, prog_bar=True)
         else:
-            bce_loss = 0
+            loss = 0
 
         if self.coarse_prediction_type != "no_coarse":
             coarse_loss = F.binary_cross_entropy_with_logits(coarse_output, mask_coarse)
             self.log("Training Coarse Loss (Binary Cross Entropy)", coarse_loss, prog_bar=True)
-            loss = bce_loss + self.coarse_lambda * coarse_loss
+            loss = loss + self.coarse_lambda * coarse_loss
         else:
-            loss = 0
+            loss = loss
 
         if self.contr_head_type != "no_contr_head":
             
-            # element wise multiplication of the feature embedding [bs, 512, 33, 33] and the mask_coarse [bs, 1, 33, 33] polyps is one and background is zero
-            feature_embed_contr_polyps = torch.mul(layer4_output, mask_coarse)
+            # downscale the prediction or use the coarse prediction could be implemented - until now we use the coarse prediction and the coarse mask
+            
+            contrastive_embedding = self.contr_head(layer4_output)
 
-            # element wise multiplication of the feature embedding [bs, 512, 33, 33] and the mask_coarse [bs, 1, 33, 33] polyps is zero and background is one
-            mask_coarse_minus = mask_coarse*-1
-            mask_coarse_invert = torch.add(mask_coarse_minus, 1) 
-            feature_embed_contr_background = torch.mul(layer4_output, mask_coarse_invert)
+            if self.coarse_prediction_type != "no_coarse" and self.use_coarse_outputs_for_contrastive:
+                contrastive_loss = self.sup_contr_loss(contrastive_embedding, mask_coarse, coarse_output)
+            elif self.using_full_decoder:
+                contrastive_loss = self.sup_contr_loss(contrastive_embedding, mask, segmentation_mask_prediction)
+            else:
+                raise NotImplementedError("Check the values for coarse_prediction_type, use_coarse_outputs_for_contrastive, using_full_decoder")
 
-            # feed both feature_embeds (1: polyps=1, background=0; 2: polyps=0, background=1) through the contrastive head
-            feature_vec_for_contr_loss_polyp = self.contr_head(feature_embed_contr_polyps)
-            feature_vec_for_contr_loss_background = self.contr_head(feature_embed_contr_background)
-
-            # Create the labels for the input
-            labels_polyps = torch.ones(feature_vec_for_contr_loss_polyp.size()[0])
-            labels_background = torch.zeros(feature_vec_for_contr_loss_background.size()[0])
-
-            # Sowohl die feature vecs als auch die labels concaten
-            concat_feature_vec = torch.concat((feature_vec_for_contr_loss_polyp, feature_vec_for_contr_loss_background))
-            concat_feature_vec = concat_feature_vec.view(concat_feature_vec.size()[0], 1, concat_feature_vec.size()[1])
-            concat_labels = torch.concat((labels_polyps, labels_background))
-
-            contrastive_loss = self.sup_contr_loss(concat_feature_vec, concat_labels)
             self.log("Training Contrastive Loss", contrastive_loss, prog_bar=True)
-            loss = loss + contrastive_loss
+            loss = loss + self.contrastive_lambda * contrastive_loss
 
         return loss
 
@@ -440,19 +421,26 @@ class MainNetwork(pl.LightningModule):
 
         segmentation_mask_prediction, coarse_output, feature_embedding = self(img)
 
+        # Section for visualization
         if batch_idx == 0 and self.current_epoch % 4 == 0:
 
             # creates tSNE visualisation for a minibatch --> could be extended for a complete batch
-            if self.current_epoch % 16 == 0 or self.current_epoch == 0:
-                    df_tsne = create_tsne(feature_embedding, mask_coarse, pca_n_comp=100)
-                    fig = plt.figure(figsize=(10,10))
-                    sns_plot = sns.scatterplot(x="tsne-one", y="tsne-two", hue="label", data=df_tsne)
-                    fig = sns_plot.get_figure()
-                    fig.savefig("tSNE_vis.jpg")
-                    img = cv2.imread("tSNE_vis.jpg")
-                    tSNE_image = wandb.Image(PIL.Image.fromarray(img))
+
+            if self.visualize_tsne:
+                # perplexity = 30
+                print("Creating tsne with perplex 30")
+                perplexity = 30
+                df_tsne = create_tsne(feature_embedding, mask_coarse, pca_n_comp=50, perplexity=perplexity)
+                fig = plt.figure(figsize=(10,10))
+                sns_plot = sns.scatterplot(x="tsne-one", y="tsne-two", hue="label", data=df_tsne)
+                fig = sns_plot.get_figure()
+                fig.savefig(f"tSNE_vis_perplex_{perplexity}.jpg")
+                img = cv2.imread(f"tSNE_vis_perplex_{perplexity}.jpg")
+                tSNE_image_30 = wandb.Image(PIL.Image.fromarray(img))
             else:
-                tSNE_image = None
+                print("Using no tsne")
+                tSNE_image_30 = None
+
 
             for idx in self.index_range:
 
@@ -494,7 +482,7 @@ class MainNetwork(pl.LightningModule):
                         # f"Prediction Output {idx}": output_image,
                         f"Prediction Output Sigmoid {idx}": output_segmap_sigmoid,
                         f"Input image {idx}": input_image,
-                        f"tSNE visualization {idx}": tSNE_image
+                        f"tSNE visualization perplex 30 {idx}": tSNE_image_30
                         })
 
         
@@ -514,33 +502,41 @@ class MainNetwork(pl.LightningModule):
 
         if self.contr_head_type != "no_contr_head":
             
-            # element wise multiplication of the feature embedding [bs, 512, 33, 33] and the mask_coarse [bs, 1, 33, 33] polyps is one and background is zero
-            feature_embed_contr_polyps = torch.mul(feature_embedding, mask_coarse)
+            # downscale the prediction or use the coarse prediction could be implemented - until now we use the coarse prediction and the coarse mask
+            
+            contrastive_embedding = self.contr_head(feature_embedding)
 
-            # element wise multiplication of the feature embedding [bs, 512, 33, 33] and the mask_coarse [bs, 1, 33, 33] polyps is zero and background is one
-            mask_coarse_minus = mask_coarse*-1
-            mask_coarse_invert = torch.add(mask_coarse_minus, 1) 
-            feature_embed_contr_background = torch.mul(feature_embedding, mask_coarse_invert)
+            if batch_idx == 0 and self.current_epoch % 4 == 0:
+                
+                if self.visualize_tsne:
+                    # creates tSNE visualisation for a minibatch --> could be extended for a complete batch
+                    # perplexity = 30
+                    print("Creating tsne with perplex 30")
+                    perplexity = 30
+                    df_tsne = create_tsne(contrastive_embedding, mask_coarse, pca_n_comp=50, perplexity=perplexity)
+                    fig = plt.figure(figsize=(10,10))
+                    sns_plot = sns.scatterplot(x="tsne-one", y="tsne-two", hue="label", data=df_tsne)
+                    fig = sns_plot.get_figure()
+                    fig.savefig(f"tSNE_vis_contr_embed_perplex_{perplexity}.jpg")
+                    img = cv2.imread(f"tSNE_vis_contr_embed_perplex_{perplexity}.jpg")
+                    tSNE_image_contr = wandb.Image(PIL.Image.fromarray(img))
+                    wandb.log({f"tSNE visualization contrastive embedding perplex 30 {idx}": tSNE_image_contr})
+                else:
+                    print("Using no tsne")
 
-            # feed both feature_embeds (1: polyps=1, background=0; 2: polyps=0, background=1) through the contrastive head
-            feature_vec_for_contr_loss_polyp = self.contr_head(feature_embed_contr_polyps)
-            feature_vec_for_contr_loss_background = self.contr_head(feature_embed_contr_background)
+            if self.coarse_prediction_type != "no_coarse" and self.use_coarse_outputs_for_contrastive:
+                contrastive_loss = self.sup_contr_loss(contrastive_embedding, mask_coarse, coarse_output)
+            elif self.using_full_decoder:
+                contrastive_loss = self.sup_contr_loss(contrastive_embedding, mask, segmentation_mask_prediction)
+            else:
+                raise NotImplementedError("Check the values for coarse_prediction_type, use_coarse_outputs_for_contrastive, using_full_decoder")
 
-            # Create the labels for the input
-            labels_polyps = torch.ones(feature_vec_for_contr_loss_polyp.size()[0])
-            labels_background = torch.zeros(feature_vec_for_contr_loss_background.size()[0])
-
-            # Sowohl die feature vecs als auch die labels concaten
-            concat_feature_vec = torch.concat((feature_vec_for_contr_loss_polyp, feature_vec_for_contr_loss_background))
-            concat_feature_vec = concat_feature_vec.view(concat_feature_vec.size()[0], 1, concat_feature_vec.size()[1])
-            concat_labels = torch.concat((labels_polyps, labels_background))
-
-            contrastive_loss = self.sup_contr_loss(concat_feature_vec, concat_labels)
             self.log("Validation Contrastive Loss", contrastive_loss, on_step=False, on_epoch=True)
+
         else:
             contrastive_loss = None
         
-        return {"coarse_vall_loss": coarse_val_loss, "val_loss": val_loss, "contrastive_loss": contrastive_loss}
+        return {"coarse_vall_loss": coarse_val_loss, "val_loss": val_loss, "Validation Contrastive Loss": contrastive_loss}
 
     def validation_epoch_end(self, outs):
         # outs is a list of whatever you returned in `validation_step`
@@ -548,13 +544,16 @@ class MainNetwork(pl.LightningModule):
         if self.coarse_prediction_type != "no_coarse":
             # coarse_loss = torch.stack([outs[0]["coarse_vall_loss"]]).mean()
             coarse_dice = self.coarse_seg_metric.compute()
-            # self.log("Validation Coarse Loss (Binary Cross Entropy)", coarse_loss, prog_bar=True)
+            ##self.log("Validation Coarse Loss (Binary Cross Entropy)", coarse_loss, prog_bar=True)
             self.log("Coarse Dice Score (Validation)", coarse_dice, prog_bar=True)
             self.coarse_seg_metric.reset()
 
         if self.using_full_decoder:
             # loss = torch.stack([outs[0]["val_loss"]]).mean()
             dice = self.seg_metric.compute()
+            print()
+            print("Dice: ", dice)
+            print()
             # self.log("Validation Loss (Binary Cross Entropy)", loss, prog_bar=True)
             self.log("Dice Score (Validation)", dice, prog_bar=True)
             self.seg_metric.reset()
