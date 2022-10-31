@@ -11,26 +11,32 @@ from utils.data import DataModuleSegmentation
 
 import wandb
 
+def main():
 
-def main(hparams: Namespace):
+    dm = DataModuleSegmentation(path_to_train_source=wandb.config.path_to_train, load_size=256, coarse_segmentation=33, batch_size=wandb.config.batch_size, num_workers=wandb.config.num_workers)
 
-    dm = DataModuleSegmentation(path_to_train_source=hparams.path_to_train, load_size=256, coarse_segmentation=33, num_workers=hparams.num_workers)
+    if wandb.config.using_full_decoder:
+        checkpoint_callback = ModelCheckpoint(save_top_k=2, dirpath=wandb.config.checkpoint_dir, monitor="Validation Loss (BCE)", mode="min")
+    elif wandb.config.coarse_prediction_type != "no_coarse":
+        checkpoint_callback = ModelCheckpoint(save_top_k=2, dirpath=wandb.config.checkpoint_dir, monitor="Validation Coarse Loss (BCE)", mode="min")
+    else:
+        raise NotImplementedError("No correct metric to monitor for checkpoint callback implemented")
 
-    checkpoint_callback = ModelCheckpoint(save_top_k=2, dirpath=hparams.checkpoint_dir, monitor="Coarse Dice Score (Validation)", mode="max")
+    # wandb_logger = WandbLogger(name=wandb.config.run_name, project=wandb.config.project_name, log_model="True")
 
-    wandb_logger = WandbLogger(name=hparams.run_name, project=hparams.project_name, log_model="True")
+    # Needed for hyperparameter tuning/sweeps
+    print(wandb.config)
 
-    model = MainNetwork(index_range=hparams.index_range, model_type=hparams.model_type, coarse_prediction_type=hparams.coarse_prediction_type, 
-                        coarse_lambda=hparams.coarse_lambda, contr_head_type=hparams.contr_head_type, using_full_decoder=hparams.using_full_decoder)
+    model = MainNetwork(wandb.config)
 
-    trainer = pl.Trainer(callbacks=checkpoint_callback, accelerator=hparams.device, devices=1, logger=wandb_logger, max_epochs=hparams.max_epochs,
-                        fast_dev_run=hparams.debug)
+    trainer = pl.Trainer(callbacks=checkpoint_callback, accelerator=wandb.config.device, devices=1, logger=wandb_logger, max_epochs=wandb.config.max_epochs,
+                        fast_dev_run=wandb.config.debug)
 
     wandb_logger.watch(model)
 
     trainer.fit(model, dm)
 
-    if hparams.test_data_path is not None:
+    if wandb.config.test_data_path is not None:
         trainer.test(ckpt_path="best", datamodule=dm)
 
 
@@ -43,16 +49,27 @@ if __name__ == "__main__":
     parser.add_argument("--path_to_train", type=str, help="path where the training data is stored")
     parser.add_argument("--model_type", type=str, choices=["normal", "dilated"] , help="What type of model is used, either normal or dilated ResNet18")
     parser.add_argument("--coarse_prediction_type", type=str, choices=["no_coarse", "linear", "mlp"], help="which type of coarse prediction should be used")
-    parser.add_argument("--contr_head_type", type=str, default="no_contr_head", choices=["no_contr_head", "contr_head_1", "contr_head_2", "contr_head_3", "contr_head_4"], help="which type of contr head is used to create the feature vector fead into contrastive loss")
-    parser.add_argument("--using_full_decoder", action='store_true', help="If a true a normal encoder is used (encoding to original seg mask size, if false no normal encoder is used")
+    parser.add_argument("--contr_head_type", type=str, default="no_contr_head", choices=["no_contr_head", "contr_head_1"], help="which type of contr head is used to create the feature vector fead into contrastive loss")
+    parser.add_argument("--using_full_decoder", action='store_true', help="If true a normal encoder is used (encoding to original seg mask size, if false no normal encoder is used")
+    parser.add_argument("--visualize_tsne", action='store_true', help="If true, no tsne is calculated during validation - makes it fast and better for hyperpara opti")
 
     # All arguments with default arguments
+    parser.add_argument("--temperature", type=float, default=0.3, help="temperature for contrastive loss")
+    parser.add_argument("--base_temperature", type=float, default=0.07, help="temperature for contrastive loss")
+    parser.add_argument("--max_samples", type=int, default=2048, help="max_samples for contrastive loss")
+    parser.add_argument("--max_views", type=int, default=100, help="max_views for contrastive loss")
+    parser.add_argument("--use_coarse_outputs_for_contrastive", action='store_true', help="If used, the coarse output of the \
+        segmentation model (prediction and mask) is used as the input to the contrastive loss. If not the full segmentation mask and prediction is downsampled to \
+            H* and W* of the feature embedding")
+    
+    parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument("--coarse_lambda", type=float, default=1.0, help="Coefficient used for the coarse loss in the overall loss")
+    parser.add_argument("--contrastive_lambda", type=float, default=1.0, help="Coefficient used for the contrastive loss in the overall loss")
     parser.add_argument("--index_range", type=list, default=[0,1], help="defines the indices (range from first idx to last idx) that are used for logging/visualizing seg_masks/predictions/feature_maps in a mini batch during validation")
     parser.add_argument("--load_size", type=int, default=256, help="size to which images will get resized")
     parser.add_argument("--test_data_path", default=None, type=str, help="path where the test target dataset is stored")
     parser.add_argument("--max_epochs", default=150, type=int, help="maximum epochs for training")
-    parser.add_argument("--batch_size", default=16, type=int, help="batch size for training")
+    parser.add_argument("--batch_size", default=32, type=int, help="batch size for training")
     parser.add_argument("--device", default='gpu', type=str, help="device to train on")
     parser.add_argument("--num_workers", default=2, type=int, help="num worker for dataloader")
     parser.add_argument("--debug", default=False, type=bool, help="If True, model is run in fast_dev_run (debug mode)")
@@ -74,4 +91,6 @@ if __name__ == "__main__":
         # Create a namespace from the argparse_dict
         hparams = Namespace(**argparse_dict)
 
-    main(hparams)
+    wandb_logger = WandbLogger(name=hparams.run_name, project=hparams.project_name, log_model="True", config=argparse_dict)
+
+    main()
