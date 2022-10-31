@@ -6,7 +6,7 @@ from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 
 
-def create_tsne(feature_embedding, segmentation_mask, pca_n_comp, verbose=0, perplexity=40, n_iter=300):
+def create_tsne(feature_embedding, segmentation_mask, pca_n_comp, verbose=0, perplexity=40, n_iter=1000):
     """
     Creates a tsne for a given feature embedding and corresponding, downscaled binary segmentation mask.
     This function returns a pandas dataframe with all features (columns) per pixel (row) from a downscaled minibatch feature embedding.
@@ -63,7 +63,7 @@ def create_tsne(feature_embedding, segmentation_mask, pca_n_comp, verbose=0, per
     pca = PCA(n_components=pca_n_comp)
     pca_result = pca.fit_transform(np_value_subset)
 
-    print(f'Cumulative explained variation for {64} principal components: {np.sum(pca.explained_variance_ratio_)}')
+    print(f'Cumulative explained variation for {pca_n_comp} principal components: {np.sum(pca.explained_variance_ratio_)}')
 
     tsne = TSNE(n_components=2, verbose=verbose, perplexity=perplexity, n_iter=n_iter)
     tsne_pca_results = tsne.fit_transform(pca_result)
