@@ -3,7 +3,7 @@ import torch
 import torch.utils.data as data
 from PIL import Image
 import os
-import numpy as np
+import numpy
 
 import pytorch_lightning as pl
 from pytorch_lightning.trainer.supporters import CombinedLoader
@@ -79,7 +79,10 @@ class DataModuleSegmentation(pl.LightningDataModule):
             self.train_data_source, self.val_data_source = data.random_split(train_data_source, [train_set_size, val_set_size])   
 
         if self.path_to_test is not None:
-            self.test_data = CustomDataset(self.path_to_test, transfo_for_train=False, load_size=self.load_size)
+            if self.coarse_segmentation is not None:
+                self.test_data = CustomDataset(self.path_to_test, transfo_for_train=False, load_size=self.load_size, coarse_segmentation=self.coarse_segmentation)
+            else:
+                self.test_data = CustomDataset(self.path_to_test, transfo_for_train=False, load_size=self.load_size)
 
     def train_dataloader(self):
 
@@ -98,16 +101,16 @@ class DataModuleSegmentation(pl.LightningDataModule):
 
         loader_source = data.DataLoader(self.val_data_source, batch_size=self.batch_size, num_workers=self.num_workers)
 
-        if self.path_to_test is not None:
+        # if self.path_to_test is not None:
 
-            loader_target_test = data.DataLoader(self.test_data, batch_size=self.batch_size, num_workers=self.num_workers)
+        #     loader_target_test = data.DataLoader(self.test_data, batch_size=self.batch_size, num_workers=self.num_workers)
 
-            loaders = CombinedLoader({"loader_val_source": loader_source, "loader_target_test": loader_target_test}, mode="max_size_cycle")
+        #     loaders = CombinedLoader({"loader_val_source": loader_source, "loader_target_test": loader_target_test}, mode="max_size_cycle")
             
-            return loaders
+        #     return loaders
 
-        else:
-            return loader_source
+        # else:
+        return loader_source
 
     def test_dataloader(self):
 
@@ -171,19 +174,20 @@ class CustomDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
 
         image = Image.open(os.path.join(os.path.normpath(self.paths[0]), f'{self.images[idx]}{self.image_postfix}')).convert('RGB') # if you get an error in this line, you might have .jpg images
-        image = np.array(image)
+        image = numpy.array(image)
         mask = Image.open(os.path.join(os.path.normpath(self.paths[1]), f'{self.masks[idx]}{self.mask_postfix}')).convert("L") # if you get an error in this line, you might have .jpg images
-        mask = np.array(mask)
+        mask = numpy.array(mask)
 
         if self.coarse_segmentation is not None:
+
             image, mask, mask_coarse = self.apply_transforms(image, mask, coarse=True)
-            
-            mask = torch.from_numpy(mask)
+            if type(mask) == numpy.ndarray and type(mask_coarse) == numpy.ndarray:
+                mask = torch.from_numpy(mask)
+                mask_coarse = torch.from_numpy(mask_coarse)
             mask = mask/255
             mask = torch.round(mask)
             mask = mask.view([1, mask.size()[0], mask.size()[1]])
 
-            mask_coarse = torch.from_numpy(mask_coarse)
             mask_coarse = mask_coarse/255
             mask_coarse = torch.round(mask_coarse)
             mask_coarse = mask_coarse.view([1, mask_coarse.size()[0], mask_coarse.size()[1]])
