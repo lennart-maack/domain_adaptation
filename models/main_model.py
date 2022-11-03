@@ -291,6 +291,8 @@ class MainNetwork(pl.LightningModule):
         self.lr = wandb_configs.lr
         self.coarse_seg_metric = Dice()
         self.seg_metric = Dice()
+        self.seg_metric_test = Dice()
+        self.coarse_seg_metric_test = Dice()
         self.sup_contr_loss = PixelContrastLoss(temperature=wandb_configs.temperature, base_temperature=wandb_configs.base_temperature, max_samples=wandb_configs.max_samples, max_views=wandb_configs.max_views)
         self.visualize_tsne = wandb_configs.visualize_tsne
 
@@ -557,3 +559,115 @@ class MainNetwork(pl.LightningModule):
             # self.log("Validation Loss (Binary Cross Entropy)", loss, prog_bar=True)
             self.log("Dice Score (Validation)", dice, prog_bar=True)
             self.seg_metric.reset()
+
+
+    def test_step(self, batch, batch_idx):
+
+        img, mask, mask_coarse = batch # mask.size(): [bs, 1, 256, 256]
+
+        segmentation_mask_prediction, coarse_output, feature_embedding = self(img)
+
+        if batch_idx == 0:
+
+            # creates tSNE visualisation for a minibatch --> could be extended for a complete batch
+            
+            # # perplexity = 30
+            # print("Creating tsne with perplex 30 for test images")
+            # perplexity = 30
+            # df_tsne = create_tsne(feature_embedding, mask_coarse, pca_n_comp=50, perplexity=perplexity)
+            # fig = plt.figure(figsize=(10,10))
+            # sns_plot = sns.scatterplot(x="tsne-one", y="tsne-two", hue="label", data=df_tsne)
+            # fig = sns_plot.get_figure()
+            # fig.savefig(f"TEST_tSNE_vis_perplex_{perplexity}.jpg")
+            # img = cv2.imread(f"TEST_tSNE_vis_perplex_{perplexity}.jpg")
+            # tSNE_image_30 = wandb.Image(PIL.Image.fromarray(img))
+            tSNE_image_30 = None
+
+            for idx in self.index_range:
+
+                # Get the feature embedding (normal and sigmoid) as wandb.Image for logging
+                grid_array, grid_array_sigmoid = visualize_feature_embedding_torch(feature_embedding, feature_embed_prop=0.5, idx=idx)
+                grid_array = wandb.Image(grid_array)
+                grid_array_sigmoid = wandb.Image(grid_array_sigmoid)
+
+                # Get the true Segmentation Mask as wandb.Image for logging
+                coarse_seg_mask = wandb.Image(F_vision.to_pil_image(mask_coarse[idx][0]).convert("L"))
+                seg_mask = wandb.Image(F_vision.to_pil_image(mask[idx][0]).convert("L"))
+                
+                # Get the prediction output (normal and sigmoid) as wandb.Image for logging
+                # output_image = wandb.Image(F_vision.to_pil_image(segmentation_mask_prediction[idx][0]).convert("L"))
+                if self.using_full_decoder:
+                    output_sigmoid = torch.sigmoid(segmentation_mask_prediction)
+                    output_segmap_sigmoid = wandb.Image(F_vision.to_pil_image(output_sigmoid[idx][0]).convert("L"))
+                else:
+                    output_segmap_sigmoid = None
+
+                # Get the true images for logging
+                input_image = wandb.Image(F_vision.to_pil_image(img[idx]))
+
+                if self.coarse_prediction_type != "no_coarse":
+                    # Get the coarse prediction output (normal and sigmoid) as wandb.Image for logging
+                    coarse_output_image = wandb.Image(F_vision.to_pil_image(coarse_output[idx][0]).convert("L"))
+                    coarse_output_sigmoid = torch.sigmoid(coarse_output)
+                    coarse_output_segmap_sigmoid = wandb.Image(F_vision.to_pil_image(coarse_output_sigmoid[idx][0]).convert("L"))
+                else:
+                    coarse_output_segmap_sigmoid = None
+
+                wandb.log({
+                        # f"Feature Embedding {idx}": grid_array,
+                        f"TEST_Feature Embedding Sigmoid {idx}": grid_array_sigmoid,
+                        f"TEST_Coarse True Segmentation Mask {idx}": coarse_seg_mask,
+                        f"TEST_True Segmentation Mask {idx}": seg_mask,
+                        # f"Coarse Prediction Output {idx}": coarse_output_image,
+                        f"TEST_Coarse Prediction Output Sigmoid {idx}": coarse_output_segmap_sigmoid,
+                        # f"Prediction Output {idx}": output_image,
+                        f"TEST_Prediction Output Sigmoid {idx}": output_segmap_sigmoid,
+                        f"TEST_Input image {idx}": input_image,
+                        f"TEST_tSNE visualization perplex 30 {idx}": tSNE_image_30
+                        })
+
+        
+        if self.using_full_decoder:
+            self.seg_metric_test.update(segmentation_mask_prediction, mask.to(dtype=torch.uint8))
+
+        if self.coarse_prediction_type != "no_coarse":
+            self.coarse_seg_metric_test.update(coarse_output, mask_coarse.to(dtype=torch.uint8))
+
+        if self.contr_head_type != "no_contr_head":
+            
+            # downscale the prediction or use the coarse prediction could be implemented - until now we use the coarse prediction and the coarse mask
+            
+            contrastive_embedding = self.contr_head(feature_embedding)
+
+            # if batch_idx == 0:
+                
+            #     # creates tSNE visualisation for a minibatch --> could be extended for a complete batch
+            #     # perplexity = 30
+            #     print("Creating tsne with perplex 30 for test after contrastive head")
+            #     perplexity = 30
+            #     df_tsne = create_tsne(contrastive_embedding, mask_coarse, pca_n_comp=50, perplexity=perplexity)
+            #     fig = plt.figure(figsize=(10,10))
+            #     sns_plot = sns.scatterplot(x="tsne-one", y="tsne-two", hue="label", data=df_tsne)
+            #     fig = sns_plot.get_figure()
+            #     fig.savefig(f"TEST_tSNE_vis_contr_embed_perplex_{perplexity}.jpg")
+            #     img = cv2.imread(f"TEST_tSNE_vis_contr_embed_perplex_{perplexity}.jpg")
+            #     tSNE_image_contr = wandb.Image(PIL.Image.fromarray(img))
+            #     wandb.log({f"TEST_tSNE visualization contrastive embedding perplex 30 {idx}": tSNE_image_contr})
+
+    def test_epoch_end(self, outs):
+        # outs is a list of whatever you returned in `validation_step`
+
+        if self.coarse_prediction_type != "no_coarse":
+            coarse_seg_metric_test = self.coarse_seg_metric_test.compute()
+            print()
+            print("Done")
+            print("coarse_seg_metric_test", coarse_seg_metric_test)
+            print()
+            self.log("FINAL Coarse Dice Score on Coarse Target Test Data", coarse_seg_metric_test, prog_bar=True)
+            self.coarse_seg_metric_test.reset()
+
+        if self.using_full_decoder:
+            seg_metric_test = self.seg_metric_test.compute()
+            print("seg_metric_test", seg_metric_test)
+            self.log("FINAL Coarse Dice Score on Coarse Target Test Data", seg_metric_test, prog_bar=True)
+            self.seg_metric_test.reset()
