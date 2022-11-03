@@ -669,5 +669,5 @@ class MainNetwork(pl.LightningModule):
         if self.using_full_decoder:
             seg_metric_test = self.seg_metric_test.compute()
             print("seg_metric_test", seg_metric_test)
-            self.log("FINAL Coarse Dice Score on Coarse Target Test Data", seg_metric_test, prog_bar=True)
+            self.log("FINAL Dice Score on Target Test Data", seg_metric_test, prog_bar=True)
             self.seg_metric_test.reset()
