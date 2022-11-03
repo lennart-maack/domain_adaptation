@@ -13,16 +13,14 @@ import wandb
 
 def main():
 
-    dm = DataModuleSegmentation(path_to_train_source=wandb.config.path_to_train, load_size=256, coarse_segmentation=33, batch_size=wandb.config.batch_size, num_workers=wandb.config.num_workers)
+    dm = DataModuleSegmentation(path_to_train_source=wandb.config.path_to_train, path_to_test=wandb.config.test_data_path, coarse_segmentation=33, load_size=256, batch_size=wandb.config.batch_size, num_workers=wandb.config.num_workers)
 
     if wandb.config.using_full_decoder:
         checkpoint_callback = ModelCheckpoint(save_top_k=2, dirpath=wandb.config.checkpoint_dir, monitor="Validation Loss (BCE)", mode="min")
-    elif wandb.config.coarse_prediction_type != "no_coarse":
+    elif wandb.config.coarse_prediction_type != "no_coarse" and wandb.config.use_coarse_outputs_for_contrastive:
         checkpoint_callback = ModelCheckpoint(save_top_k=2, dirpath=wandb.config.checkpoint_dir, monitor="Validation Coarse Loss (BCE)", mode="min")
     else:
         raise NotImplementedError("No correct metric to monitor for checkpoint callback implemented")
-
-    # wandb_logger = WandbLogger(name=wandb.config.run_name, project=wandb.config.project_name, log_model="True")
 
     # Needed for hyperparameter tuning/sweeps
     print(wandb.config)
@@ -38,8 +36,8 @@ def main():
 
     if wandb.config.test_data_path is not None:
         trainer.test(ckpt_path="best", datamodule=dm)
-
-
+        
+        
 if __name__ == "__main__":
     parser = ArgumentParser(add_help=False)
 
