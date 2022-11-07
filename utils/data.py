@@ -149,13 +149,13 @@ class CustomDataset(torch.utils.data.Dataset):
         self.train_transforms = A.Compose(
             [
                 A.ToFloat(),
-                # A.MedianBlur(p=0.1),
-                # A.RandomBrightnessContrast(brightness_limit=0.3, contrast_limit=0.3, brightness_by_max=True, p=0.7),
-                # A.HueSaturationValue(p=0.5),
-                # A.Flip(p=0.6),
-                # # A.Rotate(p=0.5),
-                # A.ElasticTransform(p=0.3),
-                # # A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
+                A.MedianBlur(p=0.1),
+                A.RandomBrightnessContrast(brightness_limit=0.3, contrast_limit=0.3, brightness_by_max=True, p=0.7),
+                A.HueSaturationValue(p=0.5),
+                A.Flip(p=0.6),
+                A.Rotate(p=0.5),
+                A.ElasticTransform(p=0.3),
+                # A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
                 ToTensorV2(),
             ]
         )
