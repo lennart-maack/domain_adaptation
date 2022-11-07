@@ -293,6 +293,8 @@ class MainNetwork(pl.LightningModule):
         self.seg_metric = Dice()
         self.seg_metric_test = Dice()
         self.coarse_seg_metric_test = Dice()
+        self.coarse_seg_metric_test_during_val = Dice()
+        self.seg_metric_test_during_val = Dice()
         self.sup_contr_loss = PixelContrastLoss(temperature=wandb_configs.temperature, base_temperature=wandb_configs.base_temperature, max_samples=wandb_configs.max_samples, max_views=wandb_configs.max_views)
         self.visualize_tsne = wandb_configs.visualize_tsne
 
@@ -384,9 +386,9 @@ class MainNetwork(pl.LightningModule):
         
         # update params
         optimizer.step(closure=optimizer_closure)
-        # skip the first 500 steps
-        if self.trainer.global_step < 500:
-            lr_scale = min(1.0, float(self.trainer.global_step + 1) / 500.0)
+        # skip the first epoch (calculated in steps)
+        if self.trainer.global_step < 30:
+            lr_scale = min(1.0, float(self.trainer.global_step + 1) / 30.0)
             for pg in optimizer.param_groups:
                 pg["lr"] = lr_scale * self.learning_rate
 
@@ -407,7 +409,7 @@ class MainNetwork(pl.LightningModule):
 
         if self.coarse_prediction_type != "no_coarse":
             coarse_loss = F.binary_cross_entropy_with_logits(coarse_output, mask_coarse)
-            self.log("Training Coarse Loss (Binary Cross Entropy)", coarse_loss, prog_bar=True)
+            # self.log("Training Coarse Loss (Binary Cross Entropy)", coarse_loss, prog_bar=True)
             loss = loss + self.coarse_lambda * coarse_loss
         else:
             loss = loss
@@ -432,11 +434,14 @@ class MainNetwork(pl.LightningModule):
 
     def validation_step(self, batch, batch_idx):
 
-        img, mask, mask_coarse = batch # mask.size(): [bs, 1, 256, 256]
+        batch_test = batch["loader_target_test"]
+        batch_val = batch["loader_val_source"]
 
-        segmentation_mask_prediction, coarse_output, feature_embedding = self(img)
+        img_val, mask_val, mask_coarse_val = batch_val # mask.size(): [bs, 1, 256, 256]
 
-        # Section for visualization
+        segmentation_mask_prediction_val, coarse_output_val, feature_embedding_val = self(img_val)
+
+        ## Section for visualization ##
         if batch_idx == 0 and self.current_epoch % 4 == 0:
 
             # creates tSNE visualisation for a minibatch --> could be extended for a complete batch
@@ -445,13 +450,13 @@ class MainNetwork(pl.LightningModule):
                 # perplexity = 30
                 print("Creating tsne with perplex 30")
                 perplexity = 30
-                df_tsne = create_tsne(feature_embedding, mask_coarse, pca_n_comp=50, perplexity=perplexity)
+                df_tsne = create_tsne(feature_embedding_val, mask_coarse_val, pca_n_comp=50, perplexity=perplexity)
                 fig = plt.figure(figsize=(10,10))
                 sns_plot = sns.scatterplot(x="tsne-one", y="tsne-two", hue="label", data=df_tsne)
                 fig = sns_plot.get_figure()
                 fig.savefig(f"tSNE_vis_perplex_{perplexity}.jpg")
-                img = cv2.imread(f"tSNE_vis_perplex_{perplexity}.jpg")
-                tSNE_image_30 = wandb.Image(PIL.Image.fromarray(img))
+                tsne_img = cv2.imread(f"tSNE_vis_perplex_{perplexity}.jpg")
+                tSNE_image_30 = wandb.Image(PIL.Image.fromarray(tsne_img))
             else:
                 print("Using no tsne")
                 tSNE_image_30 = None
@@ -460,66 +465,79 @@ class MainNetwork(pl.LightningModule):
             for idx in self.index_range:
 
                 # Get the feature embedding (normal and sigmoid) as wandb.Image for logging
-                grid_array, grid_array_sigmoid = visualize_feature_embedding_torch(feature_embedding, feature_embed_prop=0.5, idx=idx)
-                grid_array = wandb.Image(grid_array)
-                grid_array_sigmoid = wandb.Image(grid_array_sigmoid)
+                if idx <= 1:
+                    grid_array, grid_array_sigmoid = visualize_feature_embedding_torch(feature_embedding_val, feature_embed_prop=0.5, idx=idx)
+                    grid_array = wandb.Image(grid_array)
+                    grid_array_sigmoid = wandb.Image(grid_array_sigmoid)
+                else:
+                    grid_array = None
+                    grid_array_sigmoid = None
 
                 # Get the true Segmentation Mask as wandb.Image for logging
-                coarse_seg_mask = wandb.Image(F_vision.to_pil_image(mask_coarse[idx][0]).convert("L"))
-                seg_mask = wandb.Image(F_vision.to_pil_image(mask[idx][0]).convert("L"))
+                coarse_seg_mask = wandb.Image(F_vision.to_pil_image(mask_coarse_val[idx][0]).convert("L"))
+                seg_mask = wandb.Image(F_vision.to_pil_image(mask_val[idx][0]).convert("L"))
                 
                 # Get the prediction output (normal and sigmoid) as wandb.Image for logging
                 # output_image = wandb.Image(F_vision.to_pil_image(segmentation_mask_prediction[idx][0]).convert("L"))
                 if self.using_full_decoder:
-                    output_sigmoid = torch.sigmoid(segmentation_mask_prediction)
+                    output_sigmoid = torch.sigmoid(segmentation_mask_prediction_val)
                     output_segmap_sigmoid = wandb.Image(F_vision.to_pil_image(output_sigmoid[idx][0]).convert("L"))
                 else:
                     output_segmap_sigmoid = None
 
                 # Get the true images for logging
-                input_image = wandb.Image(F_vision.to_pil_image(img[idx]))
+                input_image = wandb.Image(F_vision.to_pil_image(img_val[idx]))
 
                 if self.coarse_prediction_type != "no_coarse":
                     # Get the coarse prediction output (normal and sigmoid) as wandb.Image for logging
-                    coarse_output_image = wandb.Image(F_vision.to_pil_image(coarse_output[idx][0]).convert("L"))
-                    coarse_output_sigmoid = torch.sigmoid(coarse_output)
+                    coarse_output_image = wandb.Image(F_vision.to_pil_image(coarse_output_val[idx][0]).convert("L"))
+                    coarse_output_sigmoid = torch.sigmoid(coarse_output_val)
                     coarse_output_segmap_sigmoid = wandb.Image(F_vision.to_pil_image(coarse_output_sigmoid[idx][0]).convert("L"))
                 else:
                     coarse_output_segmap_sigmoid = None
 
                 wandb.log({
                         # f"Feature Embedding {idx}": grid_array,
-                        f"Feature Embedding Sigmoid {idx}": grid_array_sigmoid,
-                        f"Coarse True Segmentation Mask {idx}": coarse_seg_mask,
+                        # f"Feature Embedding Sigmoid {idx}": grid_array_sigmoid,
+                        # f"Coarse True Segmentation Mask {idx}": coarse_seg_mask,
                         f"True Segmentation Mask {idx}": seg_mask,
                         # f"Coarse Prediction Output {idx}": coarse_output_image,
-                        f"Coarse Prediction Output Sigmoid {idx}": coarse_output_segmap_sigmoid,
+                        # f"Coarse Prediction Output Sigmoid {idx}": coarse_output_segmap_sigmoid,
                         # f"Prediction Output {idx}": output_image,
                         f"Prediction Output Sigmoid {idx}": output_segmap_sigmoid,
                         f"Input image {idx}": input_image,
                         f"tSNE visualization perplex 30 {idx}": tSNE_image_30
                         })
+                
+                if img_val.size(0) <= idx:
+                    print()
+                    print("index would be out of range, so leaving")
+                    print()
+                    break
 
-        
+        ###############################
+
+
         if self.using_full_decoder:
-            val_loss = F.binary_cross_entropy_with_logits(segmentation_mask_prediction, mask)
-            self.seg_metric.update(segmentation_mask_prediction, mask.to(dtype=torch.uint8))
+            val_loss = F.binary_cross_entropy_with_logits(segmentation_mask_prediction_val, mask_val)
+            self.seg_metric.update(segmentation_mask_prediction_val, mask_val.to(dtype=torch.uint8))
             self.log("Validation Loss (BCE)", val_loss, on_step=False, on_epoch=True)
         else:
             val_loss = None
 
         if self.coarse_prediction_type != "no_coarse":
-            coarse_val_loss = F.binary_cross_entropy_with_logits(coarse_output, mask_coarse)
-            self.coarse_seg_metric.update(coarse_output, mask_coarse.to(dtype=torch.uint8))
-            self.log("Validation Coarse Loss (BCE)", coarse_val_loss, on_step=False, on_epoch=True)
+            coarse_val_loss = F.binary_cross_entropy_with_logits(coarse_output_val, mask_coarse_val)
+            self.coarse_seg_metric.update(coarse_output_val, mask_coarse_val.to(dtype=torch.uint8))
+            # self.log("Validation Coarse Loss (BCE)", coarse_val_loss, on_step=False, on_epoch=True)
         else:
             coarse_val_loss = None
 
+        ### Contrastive Section ###
         if self.contr_head_type != "no_contr_head":
             
             # downscale the prediction or use the coarse prediction could be implemented - until now we use the coarse prediction and the coarse mask
             
-            contrastive_embedding = self.contr_head(feature_embedding)
+            contrastive_embedding = self.contr_head(feature_embedding_val)
 
             if batch_idx == 0 and self.current_epoch % 4 == 0:
                 
@@ -528,21 +546,21 @@ class MainNetwork(pl.LightningModule):
                     # perplexity = 30
                     print("Creating tsne with perplex 30")
                     perplexity = 30
-                    df_tsne = create_tsne(contrastive_embedding, mask_coarse, pca_n_comp=50, perplexity=perplexity)
+                    df_tsne = create_tsne(contrastive_embedding, mask_coarse_val, pca_n_comp=50, perplexity=perplexity)
                     fig = plt.figure(figsize=(10,10))
                     sns_plot = sns.scatterplot(x="tsne-one", y="tsne-two", hue="label", data=df_tsne)
                     fig = sns_plot.get_figure()
                     fig.savefig(f"tSNE_vis_contr_embed_perplex_{perplexity}.jpg")
-                    img = cv2.imread(f"tSNE_vis_contr_embed_perplex_{perplexity}.jpg")
-                    tSNE_image_contr = wandb.Image(PIL.Image.fromarray(img))
+                    tsne_img = cv2.imread(f"tSNE_vis_contr_embed_perplex_{perplexity}.jpg")
+                    tSNE_image_contr = wandb.Image(PIL.Image.fromarray(tsne_img))
                     wandb.log({f"tSNE visualization contrastive embedding perplex 30 {idx}": tSNE_image_contr})
                 else:
                     print("Using no tsne")
 
             if self.coarse_prediction_type != "no_coarse" and self.use_coarse_outputs_for_contrastive:
-                contrastive_loss = self.sup_contr_loss(contrastive_embedding, mask_coarse, coarse_output)
+                contrastive_loss = self.sup_contr_loss(contrastive_embedding, mask_coarse_val, coarse_output_val)
             elif self.using_full_decoder:
-                contrastive_loss = self.sup_contr_loss(contrastive_embedding, mask, segmentation_mask_prediction)
+                contrastive_loss = self.sup_contr_loss(contrastive_embedding, mask_val, segmentation_mask_prediction_val)
             else:
                 raise NotImplementedError("Check the values for coarse_prediction_type, use_coarse_outputs_for_contrastive, using_full_decoder")
 
@@ -551,17 +569,33 @@ class MainNetwork(pl.LightningModule):
         else:
             contrastive_loss = None
         
+
+        ### Section for test data (target data) ###
+        img_test, mask_test, mask_coarse_test = batch_test
+
+        segmentation_mask_prediction_test, coarse_output_test, feature_embedding_test = self(img_test)
+
+
+        if self.using_full_decoder:
+            self.seg_metric_test_during_val.update(segmentation_mask_prediction_test, mask_test.to(dtype=torch.uint8))
+
+        if self.coarse_prediction_type != "no_coarse":
+            self.coarse_seg_metric_test_during_val.update(coarse_output_test, mask_coarse_test.to(dtype=torch.uint8))
+
         return {"coarse_vall_loss": coarse_val_loss, "val_loss": val_loss, "Validation Contrastive Loss": contrastive_loss}
 
     def validation_epoch_end(self, outs):
         # outs is a list of whatever you returned in `validation_step`
-
+        
         if self.coarse_prediction_type != "no_coarse":
             # coarse_loss = torch.stack([outs[0]["coarse_vall_loss"]]).mean()
             coarse_dice = self.coarse_seg_metric.compute()
-            ##self.log("Validation Coarse Loss (Binary Cross Entropy)", coarse_loss, prog_bar=True)
-            self.log("Coarse Dice Score (Validation)", coarse_dice, prog_bar=True)
+            # self.log("Coarse Dice Score (Validation)", coarse_dice, prog_bar=True)
             self.coarse_seg_metric.reset()
+
+            coarse_dice_test_during_val = self.coarse_seg_metric_test_during_val.compute()
+            self.log("Coarse Dice Score on Test/Target (Validation)", coarse_dice_test_during_val, prog_bar=True)
+            self.coarse_seg_metric_test_during_val.reset()
 
         if self.using_full_decoder:
             # loss = torch.stack([outs[0]["val_loss"]]).mean()
@@ -572,6 +606,10 @@ class MainNetwork(pl.LightningModule):
             # self.log("Validation Loss (Binary Cross Entropy)", loss, prog_bar=True)
             self.log("Dice Score (Validation)", dice, prog_bar=True)
             self.seg_metric.reset()
+
+            dice_test_during_val = self.seg_metric_test_during_val.compute()
+            self.log("Dice Score on Test/Target (Validation)", dice_test_during_val, prog_bar=True)
+            self.seg_metric_test_during_val.reset()
 
 
     def test_step(self, batch, batch_idx):
@@ -672,11 +710,7 @@ class MainNetwork(pl.LightningModule):
 
         if self.coarse_prediction_type != "no_coarse":
             coarse_seg_metric_test = self.coarse_seg_metric_test.compute()
-            print()
-            print("Done")
-            print("coarse_seg_metric_test", coarse_seg_metric_test)
-            print()
-            self.log("FINAL Coarse Dice Score on Coarse Target Test Data", coarse_seg_metric_test, prog_bar=True)
+            # self.log("FINAL Coarse Dice Score on Coarse Target Test Data", coarse_seg_metric_test, prog_bar=True)
             self.coarse_seg_metric_test.reset()
 
         if self.using_full_decoder:
