@@ -101,16 +101,16 @@ class DataModuleSegmentation(pl.LightningDataModule):
 
         loader_source = data.DataLoader(self.val_data_source, batch_size=self.batch_size, num_workers=self.num_workers)
 
-        # if self.path_to_test is not None:
+        if self.path_to_test is not None:
 
-        #     loader_target_test = data.DataLoader(self.test_data, batch_size=self.batch_size, num_workers=self.num_workers)
+            loader_target_test = data.DataLoader(self.test_data, batch_size=self.batch_size, num_workers=self.num_workers)
 
-        #     loaders = CombinedLoader({"loader_val_source": loader_source, "loader_target_test": loader_target_test}, mode="max_size_cycle")
+            loaders = CombinedLoader({"loader_val_source": loader_source, "loader_target_test": loader_target_test}, mode="max_size_cycle")
             
-        #     return loaders
+            return loaders
 
-        # else:
-        return loader_source
+        else:
+            return loader_source
 
     def test_dataloader(self):
 
@@ -149,12 +149,12 @@ class CustomDataset(torch.utils.data.Dataset):
         self.train_transforms = A.Compose(
             [
                 A.ToFloat(),
-                A.MedianBlur(p=0.1),
-                A.RandomBrightnessContrast(brightness_limit=0.3, contrast_limit=0.3, brightness_by_max=True, p=0.7),
-                A.HueSaturationValue(p=0.5),
+                # A.MedianBlur(p=0.1),
+                A.RandomBrightnessContrast(brightness_limit=0.3, contrast_limit=0.3, brightness_by_max=True, p=0.5),
+                # A.HueSaturationValue(p=0.4),
                 A.Flip(p=0.6),
-                A.Rotate(p=0.5),
-                A.ElasticTransform(p=0.3),
+                A.Rotate(p=0.3),
+                A.ElasticTransform(p=0.5, alpha_affine=15, interpolation=1, border_mode=0, value=0, mask_value=0),
                 # A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
                 ToTensorV2(),
             ]
