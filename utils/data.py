@@ -13,6 +13,77 @@ from torchvision import transforms as TR
 import albumentations as A
 from albumentations.pytorch import ToTensorV2
 
+import random
+
+
+
+def get_img_mask_list(path_to_dataset):
+
+    path_img = os.path.join(os.path.normpath(path_to_dataset), "images")
+    path_mask = os.path.join(os.path.normpath(path_to_dataset), "masks")
+    img_list = os.listdir(path_img)
+    mask_list = os.listdir(path_mask)
+    # img_list = [filename for filename in img_list if ".png" in filename or ".jpg" in filename]
+    img_list = [os.path.splitext(os.path.basename(filename))[0] for filename in img_list if ".png" in filename or ".jpg" in filename]
+    # mask_list = [filename for filename in mask_list if ".png" in filename or ".jpg" in filename]
+    mask_list = [os.path.splitext(os.path.basename(filename))[0] for filename in mask_list if ".png" in filename or ".jpg" in filename]
+
+    img_list = sorted(img_list, key=lambda x: float(x))
+    mask_list = sorted(mask_list, key=lambda x: float(x))
+
+    assert len(img_list)  == len(mask_list), "different len of images and masks %s - %s" % (len(img_list), len(mask_list))
+    
+    for i in range(len(img_list)):
+        assert os.path.splitext(img_list[i])[0] == os.path.splitext(mask_list[i])[0], '%s and %s are not matching' % (img_list[i], mask_list[i])
+
+    return img_list, mask_list
+
+
+def split_data_into_train_val(path_to_train_source, split_ratio):
+    
+    path_img = os.path.join(os.path.normpath(path_to_train_source), "images")
+    path_mask = os.path.join(os.path.normpath(path_to_train_source), "masks")
+    img_list = os.listdir(path_img)
+    mask_list = os.listdir(path_mask)
+
+    # img_list = [filename for filename in img_list if ".png" in filename or ".jpg" in filename]
+    img_list = [os.path.splitext(os.path.basename(filename))[0] for filename in img_list if ".png" in filename or ".jpg" in filename]
+    # mask_list = [filename for filename in mask_list if ".png" in filename or ".jpg" in filename]
+    mask_list = [os.path.splitext(os.path.basename(filename))[0] for filename in mask_list if ".png" in filename or ".jpg" in filename]
+
+    img_list = sorted(img_list, key=lambda x: float(x))
+    mask_list = sorted(mask_list, key=lambda x: float(x))  
+
+    img_mask_zipped = list(zip(img_list, mask_list))
+    
+    random.shuffle(img_mask_zipped)
+
+    img_list_shuffled, mask_list_shuffled = zip(*img_mask_zipped)
+
+    split_index = int(len(img_list_shuffled) * split_ratio)
+
+    image_list_train = img_list_shuffled[:split_index]
+    image_list_val = img_list_shuffled[split_index:]
+    mask_list_train = mask_list_shuffled[:split_index]
+    mask_list_val = mask_list_shuffled[split_index:]
+
+    image_list_train = sorted(image_list_train, key=lambda x: float(x))
+    image_list_val = sorted(image_list_val, key=lambda x: float(x))
+    mask_list_train = sorted(mask_list_train, key=lambda x: float(x))
+    mask_list_val = sorted(mask_list_val, key=lambda x: float(x))
+
+    assert len(image_list_train)  == len(mask_list_train), "different len of images and masks %s - %s" % (len(image_list_train), len(mask_list_train))
+    assert len(image_list_val)  == len(mask_list_val), "different len of images and masks %s - %s" % (len(image_list_train), len(mask_list_train))
+    
+    for i in range(len(image_list_train)):
+        assert os.path.splitext(image_list_train[i])[0] == os.path.splitext(mask_list_train[i])[0], '%s and %s are not matching' % (image_list_train[i], mask_list_train[i])
+
+    for i in range(len(image_list_val)):
+        assert os.path.splitext(image_list_val[i])[0] == os.path.splitext(mask_list_val[i])[0], '%s and %s are not matching' % (image_list_val[i], mask_list_val[i])
+
+    return image_list_train, mask_list_train, image_list_val, mask_list_val
+
+
 
 class DataModuleSegmentation(pl.LightningDataModule):
     def __init__(self, path_to_train_source=None, path_to_train_target=None, path_to_test=None, path_to_predict=None, coarse_segmentation=None, domain_adaptation=False, pseudo_labels=False, batch_size=16, load_size: int = 256, num_workers=2):
@@ -54,35 +125,38 @@ class DataModuleSegmentation(pl.LightningDataModule):
             self.predict_data = CustomDataset(self.path_to_predict, transfo_for_train=False, load_size=self.load_size)
             return
 
+        image_list_train, mask_list_train, image_list_val, mask_list_val = split_data_into_train_val(self.path_to_train_source, 0.8)
+
         if self.coarse_segmentation is not None:
-            train_data_source = CustomDataset(self.path_to_train_source, transfo_for_train=True, load_size=self.load_size, coarse_segmentation=self.coarse_segmentation)
-            coarse_train_set_size = int(len(train_data_source) * 0.8)
-            coarse_val_set_size = len(train_data_source) - coarse_train_set_size
-            self.train_data_source, self.val_data_source = data.random_split(train_data_source, [coarse_train_set_size, coarse_val_set_size])
+            self.train_data_source = CustomDataset(image_list=image_list_train, mask_list=mask_list_train, path=self.path_to_train_source,
+                                                    transfo_for_train=True, load_size=self.load_size, coarse_segmentation=self.coarse_segmentation)
+            self.val_data_source = CustomDataset(image_list=image_list_val, mask_list=mask_list_val, path=self.path_to_train_source, 
+                                                transfo_for_train=False, load_size=self.load_size, coarse_segmentation=self.coarse_segmentation)
 
         # Need of a source and target dataset when using a domain_adaptation model
         elif self.domain_adaptation:
             # setup source data
-            train_data_source = CustomDataset(self.path_to_train_source, transfo_for_train=True, load_size=self.load_size)
-            train_set_size = int(len(train_data_source) * 0.8)
-            val_set_size = len(train_data_source) - train_set_size
-            self.train_data_source, self.val_data_source = data.random_split(train_data_source, [train_set_size, val_set_size])
+            self.train_data_source = CustomDataset(image_list=image_list_train, mask_list=mask_list_train, path=self.path_to_train_source,
+                                                    transfo_for_train=True, load_size=self.load_size, coarse_segmentation=self.coarse_segmentation)
+            self.val_data_source = CustomDataset(image_list=image_list_val, mask_list=mask_list_val, path=self.path_to_train_source, 
+                                                transfo_for_train=False, load_size=self.load_size, coarse_segmentation=self.coarse_segmentation)
 
             # setup target data
             self.train_data_target = CustomDataset(self.path_to_train_target, transfo_for_train=True, pseudo_labels=self.pseudo_labels, load_size=self.load_size)
         
         # Need of only one dataset when NOT using domain_adaptation model (e.g. U-Net) - it is called train_data_source
         else:
-            train_data_source = CustomDataset(self.path_to_train_source, transfo_for_train=True, load_size=self.load_size)
-            train_set_size = int(len(train_data_source) * 0.8)
-            val_set_size = len(train_data_source) - train_set_size
-            self.train_data_source, self.val_data_source = data.random_split(train_data_source, [train_set_size, val_set_size])   
+            self.train_data_source = CustomDataset(image_list=image_list_train, mask_list=mask_list_train, path=self.path_to_train_source,
+                                                    transfo_for_train=True, load_size=self.load_size, coarse_segmentation=self.coarse_segmentation)
+            self.val_data_source = CustomDataset(image_list=image_list_val, mask_list=mask_list_val, path=self.path_to_train_source, 
+                                                transfo_for_train=False, load_size=self.load_size, coarse_segmentation=self.coarse_segmentation) 
 
         if self.path_to_test is not None:
+            image_list, mask_list = get_img_mask_list(self.path_to_test)
             if self.coarse_segmentation is not None:
-                self.test_data = CustomDataset(self.path_to_test, transfo_for_train=False, load_size=self.load_size, coarse_segmentation=self.coarse_segmentation)
+                self.test_data = CustomDataset(image_list=image_list, mask_list= mask_list, path=self.path_to_test, transfo_for_train=False, load_size=self.load_size, coarse_segmentation=self.coarse_segmentation)
             else:
-                self.test_data = CustomDataset(self.path_to_test, transfo_for_train=False, load_size=self.load_size)
+                self.test_data = CustomDataset(image_list=image_list, mask_list= mask_list, path=self.path_to_test, transfo_for_train=False, load_size=self.load_size)
 
     def train_dataloader(self):
 
@@ -126,7 +200,7 @@ class DataModuleSegmentation(pl.LightningDataModule):
 
 
 class CustomDataset(torch.utils.data.Dataset):
-    def __init__(self, path, transfo_for_train, pseudo_labels=False, load_size = 256, coarse_segmentation=None):
+    def __init__(self, image_list, mask_list, path, transfo_for_train, pseudo_labels=False, load_size = 256, coarse_segmentation=None):
         """
         Args:
             path (string): Path to the folder containing the folder to training images and corresponding training masks
@@ -134,9 +208,18 @@ class CustomDataset(torch.utils.data.Dataset):
             coarse_segmentation (int): Height and Width of the downsampled segmentation mask
         """
 
-        self.path = path
+        # Tryout
+        self.images = image_list
+        self.masks = mask_list
+        self.paths = (os.path.join(os.path.normpath(path), "images"), os.path.join(os.path.normpath(path), "masks"))
+
+
+        #####
+
+        # self.path = path
         self.load_size = load_size
-        self.images, self.masks, self.paths = self.list_images(pseudo_labels=pseudo_labels)
+
+        # self.images, self.masks, self.paths = self.list_images(pseudo_labels=pseudo_labels)
         self.image_postfix, self.mask_postfix = self.get_image_and_mask_postfix(self.paths)
 
         self.transfo_for_train = transfo_for_train
@@ -150,11 +233,11 @@ class CustomDataset(torch.utils.data.Dataset):
             [
                 A.ToFloat(),
                 # A.MedianBlur(p=0.1),
-                A.RandomBrightnessContrast(brightness_limit=0.3, contrast_limit=0.3, brightness_by_max=True, p=0.5),
+                A.RandomBrightnessContrast(brightness_limit=0.2, contrast_limit=0.2, brightness_by_max=True, p=0.3),
                 # A.HueSaturationValue(p=0.4),
-                A.Flip(p=0.6),
+                A.Flip(p=0.5),
                 A.Rotate(p=0.3),
-                A.ElasticTransform(p=0.5, alpha_affine=15, interpolation=1, border_mode=0, value=0, mask_value=0),
+                A.ElasticTransform(p=0.4, alpha_affine=15, interpolation=1, border_mode=0, value=0, mask_value=0),
                 # A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
                 ToTensorV2(),
             ]
@@ -213,26 +296,26 @@ class CustomDataset(torch.utils.data.Dataset):
         return image_postfix, mask_postfix
 
 
-    def list_images(self, pseudo_labels):
+    # def list_images(self, pseudo_labels):
 
-        path_img = os.path.join(os.path.normpath(self.path), "images") #, mode)
-        if pseudo_labels:
-            path_mask = os.path.join(os.path.normpath(self.path), "pseudo_labels") #, mode)
-        else:
-            path_mask = os.path.join(os.path.normpath(self.path), "masks") #, mode)
-        img_list = os.listdir(path_img)
-        mask_list = os.listdir(path_mask)
+    #     path_img = os.path.join(os.path.normpath(self.path), "images") #, mode)
+    #     if pseudo_labels:
+    #         path_mask = os.path.join(os.path.normpath(self.path), "pseudo_labels") #, mode)
+    #     else:
+    #         path_mask = os.path.join(os.path.normpath(self.path), "masks") #, mode)
+    #     img_list = os.listdir(path_img)
+    #     mask_list = os.listdir(path_mask)
 
-        # img_list = [filename for filename in img_list if ".png" in filename or ".jpg" in filename]
-        img_list = [os.path.splitext(os.path.basename(filename))[0] for filename in img_list if ".png" in filename or ".jpg" in filename]
-        # mask_list = [filename for filename in mask_list if ".png" in filename or ".jpg" in filename]
-        mask_list = [os.path.splitext(os.path.basename(filename))[0] for filename in mask_list if ".png" in filename or ".jpg" in filename]
-        images = sorted(img_list, key=lambda x: float(x))
-        masks = sorted(mask_list, key=lambda x: float(x))
-        assert len(images)  == len(masks), "different len of images and masks %s - %s" % (len(images), len(masks))
-        for i in range(len(images)):
-            assert os.path.splitext(images[i])[0] == os.path.splitext(masks[i])[0], '%s and %s are not matching' % (images[i], masks[i])
-        return images, masks, (path_img, path_mask)
+    #     # img_list = [filename for filename in img_list if ".png" in filename or ".jpg" in filename]
+    #     img_list = [os.path.splitext(os.path.basename(filename))[0] for filename in img_list if ".png" in filename or ".jpg" in filename]
+    #     # mask_list = [filename for filename in mask_list if ".png" in filename or ".jpg" in filename]
+    #     mask_list = [os.path.splitext(os.path.basename(filename))[0] for filename in mask_list if ".png" in filename or ".jpg" in filename]
+    #     images = sorted(img_list, key=lambda x: float(x))
+    #     masks = sorted(mask_list, key=lambda x: float(x))
+    #     assert len(images)  == len(masks), "different len of images and masks %s - %s" % (len(images), len(masks))
+    #     for i in range(len(images)):
+    #         assert os.path.splitext(images[i])[0] == os.path.splitext(masks[i])[0], '%s and %s are not matching' % (images[i], masks[i])
+    #     return images, masks, (path_img, path_mask)
 
     def apply_transforms(self, image, mask, coarse=False):
         
