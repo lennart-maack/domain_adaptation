@@ -288,7 +288,7 @@ class MainNetwork(pl.LightningModule):
         self.using_full_decoder = wandb_configs.using_full_decoder
         self.contr_head_type = wandb_configs.contr_head_type
 
-        self.lr = wandb_configs.lr
+        self.learning_rate = wandb_configs.lr
         self.coarse_seg_metric = Dice()
         self.seg_metric = Dice()
         self.seg_metric_test = Dice()
@@ -373,10 +373,23 @@ class MainNetwork(pl.LightningModule):
         
 
     def configure_optimizers(self):
-        optimizer = torch.optim.Adam(self.parameters(), lr=self.lr)
-        # lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=1)
-        return optimizer
+        optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
+        lr_scheduler = torch.optim.lr_scheduler.PolynomialLR(optimizer, total_iters=self.trainer.max_epochs, power=0.9)
+        
+        return {"optimizer": optimizer, "lr_scheduler": { "scheduler": lr_scheduler, "interval": "epoch"} }
     
+
+    # learning rate warm-up
+    def optimizer_step(self, epoch, batch_idx, optimizer, optimizer_idx, optimizer_closure, on_tpu=False, using_native_amp=False, using_lbfgs=False):
+        
+        # update params
+        optimizer.step(closure=optimizer_closure)
+        # skip the first 500 steps
+        if self.trainer.global_step < 500:
+            lr_scale = min(1.0, float(self.trainer.global_step + 1) / 500.0)
+            for pg in optimizer.param_groups:
+                pg["lr"] = lr_scale * self.learning_rate
+
 
     def training_step(self, batch, batch_idx):
 
