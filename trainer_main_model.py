@@ -3,7 +3,7 @@ from argparse import ArgumentParser, Namespace
 import json
 
 from pytorch_lightning.loggers import WandbLogger
-from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 
 from models.main_model import MainNetwork
 
@@ -22,12 +22,14 @@ def main():
     else:
         raise NotImplementedError("No correct metric to monitor for checkpoint callback implemented")
 
+    lr_monitor = LearningRateMonitor(logging_interval='epoch')
+
     # Needed for hyperparameter tuning/sweeps
     print(wandb.config)
 
     model = MainNetwork(wandb.config)
 
-    trainer = pl.Trainer(callbacks=checkpoint_callback, accelerator=wandb.config.device, devices=1, logger=wandb_logger, max_epochs=wandb.config.max_epochs,
+    trainer = pl.Trainer(callbacks=[checkpoint_callback, lr_monitor], accelerator=wandb.config.device, devices=1, logger=wandb_logger, max_epochs=wandb.config.max_epochs,
                         fast_dev_run=wandb.config.debug)
 
     wandb_logger.watch(model)
