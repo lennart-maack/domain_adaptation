@@ -18,7 +18,7 @@ def main():
     if wandb.config.using_full_decoder:
         checkpoint_callback = ModelCheckpoint(save_top_k=2, dirpath=wandb.config.checkpoint_dir, monitor="Validation Loss (BCE)", mode="min")
     elif wandb.config.coarse_prediction_type != "no_coarse" and wandb.config.use_coarse_outputs_for_contrastive:
-        checkpoint_callback = ModelCheckpoint(save_top_k=2, dirpath=wandb.config.checkpoint_dir, monitor="Validation Coarse Loss (BCE)", mode="min")
+        checkpoint_callback = ModelCheckpoint(save_top_k=2, dirpath=wandb.config.checkpoint_dir, monitor="Validation Loss (BCE)", mode="min")
     else:
         raise NotImplementedError("No correct metric to monitor for checkpoint callback implemented")
 
@@ -65,7 +65,7 @@ if __name__ == "__main__":
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
     parser.add_argument("--coarse_lambda", type=float, default=1.0, help="Coefficient used for the coarse loss in the overall loss")
     parser.add_argument("--contrastive_lambda", type=float, default=1.0, help="Coefficient used for the contrastive loss in the overall loss")
-    parser.add_argument("--index_range", type=list, default=[0,1], help="defines the indices (range from first idx to last idx) that are used for logging/visualizing seg_masks/predictions/feature_maps in a mini batch during validation")
+    parser.add_argument("--index_range", type=list, default=[0, 6], help="defines the indices (range from first idx to last idx) that are used for logging/visualizing seg_masks/predictions/feature_maps in a mini batch during validation")
     parser.add_argument("--load_size", type=int, default=256, help="size to which images will get resized")
     parser.add_argument("--test_data_path", default=None, type=str, help="path where the test target dataset is stored")
     parser.add_argument("--max_epochs", default=150, type=int, help="maximum epochs for training")
