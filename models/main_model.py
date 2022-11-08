@@ -637,9 +637,13 @@ class MainNetwork(pl.LightningModule):
             for idx in self.index_range:
 
                 # Get the feature embedding (normal and sigmoid) as wandb.Image for logging
-                grid_array, grid_array_sigmoid = visualize_feature_embedding_torch(feature_embedding, feature_embed_prop=0.5, idx=idx)
-                grid_array = wandb.Image(grid_array)
-                grid_array_sigmoid = wandb.Image(grid_array_sigmoid)
+                if idx <= 1:
+                    grid_array, grid_array_sigmoid = visualize_feature_embedding_torch(feature_embedding, feature_embed_prop=0.5, idx=idx)
+                    grid_array = wandb.Image(grid_array)
+                    grid_array_sigmoid = wandb.Image(grid_array_sigmoid)
+                else:
+                    grid_array = None
+                    grid_array_sigmoid = None
 
                 # Get the true Segmentation Mask as wandb.Image for logging
                 coarse_seg_mask = wandb.Image(F_vision.to_pil_image(mask_coarse[idx][0]).convert("L"))
@@ -676,6 +680,12 @@ class MainNetwork(pl.LightningModule):
                         f"TEST_Input image {idx}": input_image,
                         f"TEST_tSNE visualization perplex 30 {idx}": tSNE_image_30
                         })
+
+                if img.size(0) <= idx:
+                    print()
+                    print("index would be out of range, so leaving")
+                    print()
+                    break
 
         
         if self.using_full_decoder:
