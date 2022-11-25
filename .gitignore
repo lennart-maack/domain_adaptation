@@ -6,3 +6,5 @@ helper.ipynb
 /venv
 
 /.conda
+
+*.ipynb
