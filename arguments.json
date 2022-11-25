@@ -1,11 +1,25 @@
 {
+    "wandb_logging" : false,
     "run_name" : "eqw",
     "project_name": "qwe",
     "checkpoint_dir": "das",
-    "path_to_train": "G:/My Drive/Master_Thesis/Github/cocosubset",
+    
+
+    "path_to_train": "C:/Users/Lenna/Google Drive Streaming/My Drive/Master_Thesis/datasets/PolypDatasets/CVC-EndoScene",
+    "test_data_path": "C:/Users/Lenna/Google Drive Streaming/My Drive/Master_Thesis/datasets/PolypDatasets/train_test_splits/ETIS-LaribPolypDB/train",
+    "test_after_train": false,
+    
+    "model_type": "dilated",
+    "coarse_segmentation_size": 33,
+    "coarse_prediction_type": "linear",
+    "contr_head_type": "contr_head_1",
+    "using_full_encoder": true,
+    "no_tsne": true,
+    "use_coarse_outputs_for_contrastive": true,
+    
+    
     "load_size": 256 ,
-    "test_data_path": null,
-    "max_epochs": 120,
+    "max_epochs": 2,
     "batch_size": 16,
     "num_workers": 2,
     "device": "cpu",
