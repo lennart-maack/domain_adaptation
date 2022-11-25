@@ -8,9 +8,10 @@ import seaborn as sns
 
 import pytorch_lightning as pl
 
-from models.resnet.resnet_backbone import ResNetBackbone
-from utils.visualisation import create_tsne
-from utils.losses import PixelContrastLoss
+from main_method.utils.visualisation import create_tsne
+from main_method.utils.losses import PixelContrastLoss
+
+from main_method.models.resnet.resnet_backbone import ResNetBackbone
 
 from torchmetrics import Dice
 
@@ -26,41 +27,6 @@ import torchvision.transforms.functional as F_vision
 import wandb
 
 from torchvision import models
-
-
-def visualize_feature_embedding_matplot(coarse_seg_mask, feature_embedding):
-    """
-    Visualizes the feaure embedding in a grid. 
-    coarse_seg_mask (torch.tensor): (B, NC, H*, W*) B:batch size, NC:number of classes (usually 1), H*,W*: height and width of the segmentation mask
-    feature_embedding (torch.tensor): (B, D, H*, W*) B:batch size, D:spatial feature dimension, H*,W*: height and width of the feature embedding
-    """
-
-    # we split the feature embedding, because else the computation for visualization would take too long
-    splited_embedding_size = int(feature_embedding.size()[1]/2)
-    splited_feature_embedding, _ = feature_embedding.split(splited_embedding_size, dim=1)
-
-    spatial_dim = splited_feature_embedding.size()[1]
-
-    grid_dim = math.ceil(math.sqrt(spatial_dim))
-
-    fig = plt.figure(figsize=(grid_dim, grid_dim))
-    grid = ImageGrid(fig, 111,  # similar to subplot(111)
-                    nrows_ncols=(grid_dim+1, grid_dim),  # creates n x m grid of axes, + 1 because we also plot the segmentation mask in (0,0) 
-                    axes_pad=0.1,  # pad between axes in inch.
-                    )
-
-    coarse_seg_mask = F_vision.to_pil_image(coarse_seg_mask[0][0]).convert("L")
-    coarse_seg_mask = np.asarray(coarse_seg_mask)
-    grid[0].imshow(coarse_seg_mask, cmap='gray', vmin=0, vmax=255)
-
-    for i, feature_embed in enumerate(splited_feature_embedding[0]):
-
-        # Iterating over the grid returns the Axes.
-        feature_map = F_vision.to_pil_image(feature_embed).convert("L")
-        feature_map = np.asarray(feature_map)
-        grid[i+1].imshow(feature_map, cmap='gray', vmin=0, vmax=255)
-
-    return fig
 
 
 def visualize_feature_embedding_torch(feature_embedding, feature_embed_prop, idx):
