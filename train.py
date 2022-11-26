@@ -73,7 +73,6 @@ if __name__ == "__main__":
     parser.add_argument("--coarse_segmentation_size", type=int, default=None, help="Size of the coarse segmentation after the dilated backbone - this is only important to load the train, val and test images in the correct size for evaluation")
     parser.add_argument("--contr_head_type", type=str, default="no_contr_head", choices=["no_contr_head", "contr_head_1"], help="which type of contr head is used to create the feature vector fead into contrastive loss")
     parser.add_argument("--using_full_decoder", action='store_true', help="If true a normal encoder is used (encoding to original seg mask size, if false no normal encoder is used")
-    
     parser.add_argument("--max_epochs", default=150, type=int, help="maximum epochs for training")
     parser.add_argument("--test_after_train", type=bool, help="if set to true and test data provided by test_data_path, the best model will be applied on test data")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
