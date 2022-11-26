@@ -12,7 +12,7 @@ This repository contains:
 
 Clone this repository
 ```
-https://github.com/lennart-maack/domain_adaptation.git
+git clone https://github.com/lennart-maack/domain_adaptation.git
 ```
 
 ## Requirements
