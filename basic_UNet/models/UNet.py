@@ -323,7 +323,7 @@ class SegModel(LightningModule):
 
     def __init__(
         self,
-        model_name: str,
+        model_type: str,
         num_classes: int = 1,
         lr: float = 1e-3,
         num_layers: int = 3,
@@ -332,7 +332,7 @@ class SegModel(LightningModule):
         **kwargs,
     ):
         super().__init__(**kwargs)
-        self.model_name = model_name
+        self.model_type = model_type
         self.num_classes = num_classes
         self.lr = lr
         self.num_layers = num_layers
@@ -342,15 +342,15 @@ class SegModel(LightningModule):
         self.dice_coeff = torchmetrics.Dice()
         self.dice_coeff_test = torchmetrics.Dice()
 
-        if model_name == "unet":
+        if model_type == "unet":
             self.net = UNet(
                 num_classes=self.num_classes, num_layers=self.num_layers, features_start=self.features_start, bilinear=self.bilinear
             )
         
-        if model_name == "unet_resnet_backbone":
+        if model_type == "unet_resnet_backbone":
             self.net = UNET_ResNet18(num_classes)
 
-        elif model_name == "deeplabv3":
+        elif model_type == "deeplabv3":
             self.net = createDeepLabv3()
 
         else:
@@ -362,7 +362,7 @@ class SegModel(LightningModule):
 
     def forward(self, x):
 
-        if self.model_name == "deeplabv3":
+        if self.model_type == "deeplabv3":
             return self.net(x)['out']
 
         else:

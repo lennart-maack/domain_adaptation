@@ -26,7 +26,7 @@ def main():
     # Needed for hyperparameter tuning/sweeps
     print(wandb.config)
 
-    model = SegModel(model_name=wandb.config.model_name, num_classes=wandb.config.num_classes_for_UNet)
+    model = SegModel(model_type=wandb.config.model_type, num_classes=wandb.config.num_classes_for_UNet)
 
     trainer = pl.Trainer(callbacks=[checkpoint_callback], accelerator=wandb.config.device, devices=1, logger=wandb_logger, max_epochs=wandb.config.max_epochs,
                         fast_dev_run=wandb.config.debug)
@@ -63,7 +63,7 @@ if __name__ == "__main__":
 
 
     # Arguments for model and training settings
-    parser.add_argument("--model_name", type=str, choices=["unet", "unet_resnet_backbone", "deeplabv3"] , help="What type of backbone is used, either normal or dilated ResNet18")
+    parser.add_argument("--model_type", type=str, choices=["unet", "unet_resnet_backbone", "deeplabv3"] , help="What type of backbone is used, either normal or dilated ResNet18")
     parser.add_argument("--num_classes_for_UNet", type=int, help="Number of output channels for the segmentation mask predicted by UNet")
     parser.add_argument("--max_epochs", default=150, type=int, help="maximum epochs for training")
     parser.add_argument("--test_after_train", type=bool, help="if set to true and test data provided by test_data_path, the best model will be applied on test data")

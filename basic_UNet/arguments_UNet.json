@@ -9,7 +9,7 @@
     "test_data_path": "C:/Users/Lenna/Google Drive Streaming/My Drive/Master_Thesis/datasets/PolypDatasets/train_test_splits/ETIS-LaribPolypDB/train",
     "test_after_train": false,
     
-    "model_name": "unet_resnet_backbone",
+    "model_type": "unet_resnet_backbone",
     "num_classes_for_UNet": 1,
 
     "load_size": 256 ,
