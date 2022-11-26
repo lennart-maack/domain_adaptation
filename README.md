@@ -47,7 +47,6 @@ To start training with the main_method, set the arguments.json and execute the f
 
 ```
 python "/path/to/train.py" --load_json "/path/to/parameters.json" 
-
 ```
 
 ### Train a UNet
@@ -55,4 +54,9 @@ python "/path/to/train.py" --load_json "/path/to/parameters.json"
 If you want to train a UNet or UNet with ResNet18 backbone, there are two ways.
 
 1. Use basic_UNet/train_UNet.py and set the corresponding parameters in arguments_UNet.json (model_type, num_classes etc.)
-2. You could also se train.py and set the following parameters (model_type: "normal", coarse_prediction_type: "no_coarse", contr_head_type: "no_contr_head", using_full_decoder: true)
+
+```
+python "/path/to/train_UNet.py" --load_json "/path/to/arguments_UNet.json" 
+```
+
+2. You could also use train.py and set the following parameters (model_type: "normal", coarse_prediction_type: "no_coarse", contr_head_type: "no_contr_head", using_full_decoder: true)
