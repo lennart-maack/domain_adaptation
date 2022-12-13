@@ -6,7 +6,7 @@ import os
 from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 
-from main_method.models.main_model import MainNetwork
+from main_method.models.model_approach1 import MainNetwork
 
 from main_method.utils.data import DataModuleSegmentation
 
@@ -15,14 +15,11 @@ import wandb
 
 def main():
 
-    dm = DataModuleSegmentation(path_to_train_source=wandb.config.path_to_train, path_to_test=wandb.config.test_data_path, coarse_segmentation=wandb.config.coarse_segmentation_size, load_size=256, batch_size=wandb.config.batch_size, num_workers=wandb.config.num_workers)
+    dm = DataModuleSegmentation(path_to_train_source=wandb.config.path_to_train, path_to_train_target=wandb.config.path_to_train_target, domain_adaptation=wandb.config.domain_adaptation,
+                                path_to_test=wandb.config.test_data_path, coarse_segmentation=wandb.config.coarse_segmentation_size, load_size=256,
+                                batch_size=wandb.config.batch_size, num_workers=wandb.config.num_workers)
 
-    if wandb.config.using_full_decoder:
-        checkpoint_callback = ModelCheckpoint(save_top_k=2, dirpath=wandb.config.checkpoint_dir, monitor="Validation Loss (BCE)", mode="min")
-    elif wandb.config.coarse_prediction_type != "no_coarse" and wandb.config.use_coarse_outputs_for_contrastive:
-        checkpoint_callback = ModelCheckpoint(save_top_k=2, dirpath=wandb.config.checkpoint_dir, monitor="Validation Loss (BCE)", mode="min")
-    else:
-        raise NotImplementedError("No correct metric to monitor for checkpoint callback implemented")
+    checkpoint_callback = ModelCheckpoint(save_top_k=1, dirpath=wandb.config.checkpoint_dir, monitor="Validation Loss (BCE)", mode="min")
 
     lr_monitor = LearningRateMonitor(logging_interval='epoch')
 
@@ -38,7 +35,7 @@ def main():
 
     trainer.fit(model, dm)
 
-    if wandb.config.test_data_path is not None and wandb.config.test_after_train:
+    if wandb.config.test_data_path is not None:
         trainer.test(ckpt_path="best", datamodule=dm)
         
         
@@ -55,12 +52,14 @@ if __name__ == "__main__":
     parser.add_argument("--run_name", type=str, help="Name of the run in wandb")
     parser.add_argument("--project_name", type=str, help="Name of the project in wandb")
     parser.add_argument("--checkpoint_dir", type=str, help="path where the checkpoint (model etc.) should be saved")
-    parser.add_argument("--visualize_tsne", action='store_true', help="If true, no tsne is calculated during validation - makes it fast and better for hyperpara opti")
-    parser.add_argument("--index_range", type=list, default=[0, 6], help="defines the indices (range from first idx to last idx) that are used for logging/visualizing seg_masks/predictions/feature_maps in a mini batch during validation")
+    parser.add_argument("--visualize_tsne", action='store_true', help="If set, tsne is calculated during validation - makes it fast and better for hyperpara opti")
+    parser.add_argument("--index_range", type=list, default=[0, 2], help="defines the indices (range from first idx to last idx) that are used for logging/visualizing seg_masks/predictions/feature_maps in a mini batch during validation")
 
     
     # Arguments for data
     parser.add_argument("--path_to_train", type=str, help="path where the training data is stored")
+    parser.add_argument("--path_to_train_target", type=str, help="path where the target training data is stored")
+    parser.add_argument("--domain_adaptation", action='store_true', help="If set, domain adaptation is used (a target dataset for training is loaded in data.py)")
     parser.add_argument("--test_data_path", default=None, type=str, help="path where the test target dataset is stored")
     parser.add_argument("--load_size", type=int, default=256, help="size to which images will get resized")
     parser.add_argument("--batch_size", default=32, type=int, help="batch size for training")
@@ -72,11 +71,11 @@ if __name__ == "__main__":
     parser.add_argument("--coarse_prediction_type", type=str, default="no_coarse", choices=["no_coarse", "linear", "mlp"], help="which type of coarse prediction should be used")
     parser.add_argument("--coarse_segmentation_size", type=int, default=None, help="Size of the coarse segmentation after the dilated backbone - this is only important to load the train, val and test images in the correct size for evaluation")
     parser.add_argument("--contr_head_type", type=str, default="no_contr_head", choices=["no_contr_head", "contr_head_1"], help="which type of contr head is used to create the feature vector fead into contrastive loss")
-    parser.add_argument("--using_full_decoder", action='store_true', help="If true a normal encoder is used (encoding to original seg mask size, if false no normal encoder is used")
+    # parser.add_argument("--using_full_decoder", action='store_true', help="If true a normal encoder is used (encoding to original seg mask size, if false no normal encoder is used")
     parser.add_argument("--max_epochs", default=150, type=int, help="maximum epochs for training")
     parser.add_argument("--test_after_train", type=bool, help="if set to true and test data provided by test_data_path, the best model will be applied on test data")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
-    parser.add_argument("--coarse_lambda", type=float, default=1.0, help="Coefficient used for the coarse loss in the overall loss")
+    # parser.add_argument("--coarse_lambda", type=float, default=1.0, help="Coefficient used for the coarse loss in the overall loss")
     parser.add_argument("--contrastive_lambda", type=float, default=1.0, help="Coefficient used for the contrastive loss in the overall loss")
     parser.add_argument("--device", default='gpu', type=str, help="device to train on")
 
