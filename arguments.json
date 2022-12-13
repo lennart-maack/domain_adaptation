@@ -6,22 +6,17 @@
     
 
     "path_to_train": "C:/Users/Lenna/Google Drive Streaming/My Drive/Master_Thesis/datasets/PolypDatasets/CVC-EndoScene",
-    "test_data_path": "C:/Users/Lenna/Google Drive Streaming/My Drive/Master_Thesis/datasets/PolypDatasets/train_test_splits/ETIS-LaribPolypDB/train",
-    "test_after_train": false,
-    
-    "model_type": "dilated",
-    "coarse_segmentation_size": 33,
-    "coarse_prediction_type": "linear",
-    "contr_head_type": "contr_head_1",
-    "using_full_encoder": true,
-    "no_tsne": true,
-    "use_coarse_outputs_for_contrastive": true,
-    
-    
+    "path_to_train_target": "C:/Users/Lenna/Google Drive Streaming/My Drive/Master_Thesis/datasets/PolypDatasets/ETIS-LaribPolypDB",
+    "domain_adaptation": true,
+    "test_data_path": "C:/Users/Lenna/Google Drive Streaming/My Drive/Master_Thesis/datasets/PolypDatasets/ETIS-LaribPolypDB",
     "load_size": 256 ,
-    "max_epochs": 2,
     "batch_size": 16,
     "num_workers": 2,
+    
+    "model_type": "dilated",
+    "contr_head_type": "contr_head_1",
+    
+    "max_epochs": 2,
     "device": "cpu",
     "debug": true,
     "overfit_batches": 0.0

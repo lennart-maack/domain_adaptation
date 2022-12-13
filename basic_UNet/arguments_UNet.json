@@ -6,7 +6,7 @@
     
 
     "path_to_train": "C:/Users/Lenna/Google Drive Streaming/My Drive/Master_Thesis/datasets/PolypDatasets/CVC-EndoScene",
-    "test_data_path": "C:/Users/Lenna/Google Drive Streaming/My Drive/Master_Thesis/datasets/PolypDatasets/train_test_splits/ETIS-LaribPolypDB/train",
+    "test_data_path": "C:/Users/Lenna/Google Drive Streaming/My Drive/Master_Thesis/datasets/PolypDatasets/ETIS-LaribPolypDB",
     "test_after_train": false,
     
     "model_type": "unet_resnet_backbone",
