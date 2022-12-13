@@ -2,6 +2,7 @@
 helper.ipynb
 /cocosubset
 /wandb
+/basic_UNet/wandb
 
 /venv
 
