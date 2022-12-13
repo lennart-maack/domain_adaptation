@@ -35,7 +35,7 @@ def main():
 
     trainer.fit(model, dm)
 
-    if wandb.config.test_data_path is not None and wandb.config.test_after_train:
+    if wandb.config.test_data_path is not None:
         trainer.test(ckpt_path="best", datamodule=dm)
         
         
@@ -68,6 +68,7 @@ if __name__ == "__main__":
     parser.add_argument("--max_epochs", default=150, type=int, help="maximum epochs for training")
     parser.add_argument("--test_after_train", type=bool, help="if set to true and test data provided by test_data_path, the best model will be applied on test data")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
+    parser.add_argument("--device", default='gpu', type=str, help="device to train on")
     
     # Debugging options
     parser.add_argument("--debug", default=False, type=bool, help="If True, model is run in fast_dev_run (debug mode)")
