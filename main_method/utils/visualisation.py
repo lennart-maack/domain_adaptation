@@ -14,11 +14,15 @@ def create_tsne(feature_embedding, segmentation_mask, pca_n_comp, verbose=0, per
     
     Input:
     Feature embedding (torch.tensor): size [Batch_size, D, H*, W*], D being the spatial dimension of the feature embedding, H*,W* height, width of the feature embedding
-    Segmentation mask (torch.tensor): size [Batch_size, 1, H*, W*]
+    Segmentation mask (torch.tensor): size [Batch_size, 1, H, W]
     pca_n_comp (int): number of principal components used for principal components analysis
     """
     feature_embedding = feature_embedding.cpu().numpy()
     segmentation_mask = segmentation_mask.cpu().numpy()
+
+    # Downsample the segmentation mask to the size of the feature embedding
+    segmentation_mask = torch.nn.functional.interpolate(segmentation_mask,
+                                                 (feature_embedding.shape[2], feature_embedding.shape[3]), mode='nearest')
 
     assert (feature_embedding.shape[2], feature_embedding.shape[3]) == (segmentation_mask.shape[2], segmentation_mask.shape[3]), "feature_embedding and segmentation_mask have to have the same shape"
 
