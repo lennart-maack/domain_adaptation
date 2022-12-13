@@ -44,7 +44,7 @@ def main_FDA(hparams: Namespace):
 if __name__ == "__main__":
     parser = ArgumentParser(add_help=False)
     parser.add_argument("--model_type", type=str, choices=["FDA", "FDA_self_supervised", "UNet_baseline"], help="Name of the model which is used for training, FDA: Fourier Domain Adaptation")
-    parser.add_argument("--LB", type=float, default= 0.1, help="value (between (0,1)) of beta that examines how much of the amplitude of x^t replaces the amplitude of x^s. Refer to original paper for more information")
+    parser.add_argument("--LB", type=float, default= 0.01, help="value (between (0,01)) of beta that examines how much of the amplitude of x^t replaces the amplitude of x^s. Refer to original paper for more information")
     parser.add_argument("--run_name", type=str, help="Name of the run in wandb")
     parser.add_argument("--project_name", type=str, help="Name of the project in wandb")
     parser.add_argument("--checkpoint_dir", type=str, help="path where the checkpoint (model etc.) should be saved")
