@@ -340,7 +340,9 @@ class SegModel(LightningModule):
         self.bilinear = bilinear
 
         self.dice_coeff = torchmetrics.Dice()
-        self.dice_coeff_test = torchmetrics.Dice()
+        self.seg_metric_test = torchmetrics.Dice()
+        self.seg_metric_test_during_val = torchmetrics.Dice()
+
 
         if model_type == "unet":
             self.net = UNet(
@@ -384,7 +386,7 @@ class SegModel(LightningModule):
         log_dict = {"Binary Cross Entropy Loss": loss}
 
         # Log loss and metric
-        self.log("Binary Cross Entropy Loss - Training", loss)
+        self.log("Training Loss - Source (Binary Cross Entropy)", loss)
 
         return {"loss": loss, "log": log_dict, "progress_bar": log_dict}
 
@@ -401,6 +403,16 @@ class SegModel(LightningModule):
         # Log loss, metric and domain output
         self.log('Validation Loss (BCE)', loss_val, on_step=False, prog_bar=True, on_epoch=True)
 
+
+        # Target/Test Data
+        img_test, mask_test = batch["loader_target_test"]
+        img_test = img_test.float()
+
+        segmentation_mask_prediction_test = self(img_test)
+
+        self.seg_metric_test_during_val.update(segmentation_mask_prediction_test, mask_test.to(dtype=torch.uint8))
+
+
         return {"Validation Loss (BCE)": loss_val}
 
     def validation_epoch_end(self, outs):
@@ -413,23 +425,24 @@ class SegModel(LightningModule):
         self.log("Dice Score (Validation)", dice, prog_bar=True)
         self.dice_coeff.reset()
 
+        dice_test_during_val = self.seg_metric_test_during_val.compute()
+        self.log("Dice Score on Test/Target (Validation)", dice_test_during_val, prog_bar=True)
+        self.seg_metric_test_during_val.reset()
+
 
     def test_step(self, batch, batch_idx):
         
         img, mask = batch
         img = img.float()
 
-        seg_out = self(img)# needed when we use DeepLabv3 model   
+        seg_out = self(img)   
 
-        self.dice_coeff_test.update(seg_out, mask.to(dtype=torch.uint8))
+        self.seg_metric_test.update(seg_out, mask.to(dtype=torch.uint8))
 
 
     def test_epoch_end(self, outs):
 
-        dice_test = self.dice_coeff_test.compute()
-        print()
-        print("Dice on test: ", dice_test)
-        print()
-        # self.log("Validation Loss (Binary Cross Entropy)", loss, prog_bar=True)
-        self.log("Dice Score (Test)", dice_test, prog_bar=True)
-        self.dice_coeff_test.reset()
+        seg_metric_test = self.seg_metric_test.compute()
+        print("seg_metric_test", seg_metric_test)
+        self.log("FINAL Dice Score on Target Test Data", seg_metric_test, prog_bar=True)
+        self.seg_metric_test.reset()
