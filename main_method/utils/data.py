@@ -4,6 +4,7 @@ import torch.utils.data as data
 from PIL import Image
 import os
 import numpy
+import pandas as pd
 
 import pytorch_lightning as pl
 from pytorch_lightning.trainer.supporters import CombinedLoader
@@ -16,27 +17,14 @@ from albumentations.pytorch import ToTensorV2
 import random
 
 
+def get_img_mask_list(path, csv_type):
 
-def get_img_mask_list(path_to_dataset):
-
-    path_img = os.path.join(os.path.normpath(path_to_dataset), "images")
-    path_mask = os.path.join(os.path.normpath(path_to_dataset), "masks")
-    img_list = os.listdir(path_img)
-    mask_list = os.listdir(path_mask)
-    # img_list = [filename for filename in img_list if ".png" in filename or ".jpg" in filename]
-    img_list = [os.path.splitext(os.path.basename(filename))[0] for filename in img_list if ".png" in filename or ".jpg" in filename]
-    # mask_list = [filename for filename in mask_list if ".png" in filename or ".jpg" in filename]
-    mask_list = [os.path.splitext(os.path.basename(filename))[0] for filename in mask_list if ".png" in filename or ".jpg" in filename]
-
-    img_list = sorted(img_list, key=lambda x: float(x))
-    mask_list = sorted(mask_list, key=lambda x: float(x))
-
-    assert len(img_list)  == len(mask_list), "different len of images and masks %s - %s" % (len(img_list), len(mask_list))
+    df = pd.read_csv(os.path.join(path, "csv", f"{csv_type}.csv"))
+    img_mask_list = df['image_id'].tolist()
     
-    for i in range(len(img_list)):
-        assert os.path.splitext(img_list[i])[0] == os.path.splitext(mask_list[i])[0], '%s and %s are not matching' % (img_list[i], mask_list[i])
+    img_mask_list = sorted(img_mask_list, key=lambda x: float(x))
 
-    return img_list, mask_list
+    return (img_mask_list, img_mask_list)
 
 
 def split_data_into_train_val(path_to_train_source, split_ratio):
@@ -125,38 +113,35 @@ class DataModuleSegmentation(pl.LightningDataModule):
             self.predict_data = CustomDataset(self.path_to_predict, transfo_for_train=False, load_size=self.load_size)
             return
 
-        image_list_train, mask_list_train, image_list_val, mask_list_val = split_data_into_train_val(self.path_to_train_source, 0.8)
-
-        if self.coarse_segmentation is not None:
-            self.train_data_source = CustomDataset(image_list=image_list_train, mask_list=mask_list_train, path=self.path_to_train_source,
-                                                    transfo_for_train=True, load_size=self.load_size, coarse_segmentation=self.coarse_segmentation)
-            self.val_data_source = CustomDataset(image_list=image_list_val, mask_list=mask_list_val, path=self.path_to_train_source, 
-                                                transfo_for_train=False, load_size=self.load_size, coarse_segmentation=self.coarse_segmentation)
+        ## Get image lists for train, val, test for each dataset according to data/csv
+        ### Dataset names: CVC-EndoScene, ETIS-LaribPolypDB, KVASIR_SEG
+        image_list_train_source, mask_list_train_source = get_img_mask_list(self.path_to_train_source, "train")
+        image_list_val_source, mask_list_val_source = get_img_mask_list(self.path_to_train_source, "valid")
+        image_list_test_target, mask_list_test_target = get_img_mask_list(self.path_to_test, "test")
+        if self.domain_adaptation:
+            image_list_train_target, mask_list_train_target = get_img_mask_list(self.path_to_train_target, "valid")
 
         # Need of a source and target dataset when using a domain_adaptation model
-        elif self.domain_adaptation:
+        if self.domain_adaptation:
             # setup source data
-            self.train_data_source = CustomDataset(image_list=image_list_train, mask_list=mask_list_train, path=self.path_to_train_source,
+            self.train_data_source = CustomDataset(image_list=image_list_train_source, mask_list=mask_list_train_source, path=self.path_to_train_source,
                                                     transfo_for_train=True, load_size=self.load_size, coarse_segmentation=self.coarse_segmentation)
-            self.val_data_source = CustomDataset(image_list=image_list_val, mask_list=mask_list_val, path=self.path_to_train_source, 
+            self.val_data_source = CustomDataset(image_list=image_list_val_source, mask_list=mask_list_val_source, path=self.path_to_train_source, 
                                                 transfo_for_train=False, load_size=self.load_size, coarse_segmentation=self.coarse_segmentation)
 
             # setup target data
-            self.train_data_target = CustomDataset(self.path_to_train_target, transfo_for_train=True, pseudo_labels=self.pseudo_labels, load_size=self.load_size)
+            self.train_data_target = CustomDataset(image_list=image_list_train_target, mask_list=mask_list_train_target, path=self.path_to_train_target, 
+                                                    transfo_for_train=False, load_size=self.load_size)
         
         # Need of only one dataset when NOT using domain_adaptation model (e.g. U-Net) - it is called train_data_source
         else:
-            self.train_data_source = CustomDataset(image_list=image_list_train, mask_list=mask_list_train, path=self.path_to_train_source,
+            self.train_data_source = CustomDataset(image_list=image_list_train_source, mask_list=mask_list_train_source, path=self.path_to_train_source,
                                                     transfo_for_train=True, load_size=self.load_size, coarse_segmentation=self.coarse_segmentation)
-            self.val_data_source = CustomDataset(image_list=image_list_val, mask_list=mask_list_val, path=self.path_to_train_source, 
+            self.val_data_source = CustomDataset(image_list=image_list_val_source, mask_list=mask_list_val_source, path=self.path_to_train_source, 
                                                 transfo_for_train=False, load_size=self.load_size, coarse_segmentation=self.coarse_segmentation) 
 
         if self.path_to_test is not None:
-            image_list, mask_list = get_img_mask_list(self.path_to_test)
-            if self.coarse_segmentation is not None:
-                self.test_data = CustomDataset(image_list=image_list, mask_list= mask_list, path=self.path_to_test, transfo_for_train=False, load_size=self.load_size, coarse_segmentation=self.coarse_segmentation)
-            else:
-                self.test_data = CustomDataset(image_list=image_list, mask_list= mask_list, path=self.path_to_test, transfo_for_train=False, load_size=self.load_size)
+            self.test_data = CustomDataset(image_list=image_list_test_target, mask_list= mask_list_test_target, path=self.path_to_test, transfo_for_train=False, load_size=self.load_size)
 
     def train_dataloader(self):
 
@@ -164,7 +149,7 @@ class DataModuleSegmentation(pl.LightningDataModule):
             loader_source = data.DataLoader(self.train_data_source, batch_size=self.batch_size, shuffle=True, num_workers=self.num_workers, drop_last=True) # drop_last=True is needed to calculate the FFT for FDA properly
             loader_target = data.DataLoader(self.train_data_target, batch_size=self.batch_size, shuffle=True, num_workers=self.num_workers, drop_last=True) # drop_last=True is needed to calculate the FFT for FDA properly
 
-            loaders = CombinedLoader({"loader_source": loader_source, "loader_target": loader_target}, mode="min_size")
+            loaders = CombinedLoader({"loader_source": loader_source, "loader_target": loader_target}, mode="max_size_cycle")
             return loaders
         
         else:
