@@ -382,9 +382,11 @@ class MainNetwork(pl.LightningModule):
 
             self.log("Training Contrastive Loss", contrastive_loss, prog_bar=True)
             loss = 0.75 * loss_bce_src + 0.75 * loss_bce_src_in_trgt + self.contrastive_lambda * contrastive_loss + 0.005 * loss_ent
+            self.log("Overall Loss", loss, prog_bar=True)
 
         else:
             loss = 0.75 * loss_bce_src + 0.75 * loss_bce_src_in_trgt + 0.005 * loss_ent
+            self.log("Overall Loss", loss, prog_bar=True)
 
         return loss
 
