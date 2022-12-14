@@ -381,10 +381,10 @@ class MainNetwork(pl.LightningModule):
             contrastive_loss = self.sup_contr_loss(contrastive_embedding, concat_masks, concat_predictions)
 
             self.log("Training Contrastive Loss", contrastive_loss, prog_bar=True)
-            loss = 0.75 * loss_bce_src + 0.75 * loss_bce_src_in_trgt + self.contrastive_lambda * contrastive_loss * 0.005 * loss_ent
+            loss = 0.75 * loss_bce_src + 0.75 * loss_bce_src_in_trgt + self.contrastive_lambda * contrastive_loss + 0.005 * loss_ent
 
         else:
-            print("You are not using contrastive head")
+            loss = 0.75 * loss_bce_src + 0.75 * loss_bce_src_in_trgt + 0.005 * loss_ent
 
         return loss
 
