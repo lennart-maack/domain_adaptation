@@ -352,6 +352,7 @@ class MainNetwork(pl.LightningModule):
         # 3. Feed the source image into the model to get prediction and latent representation (layer4_output_src)
         # Compute the BCE loss using the source image
         segmentation_mask_prediction_src, layer4_output_src = self(img_source)
+
         loss_bce_src = F.binary_cross_entropy_with_logits(segmentation_mask_prediction_src, mask_source)
         self.log("Training Loss - Source (Binary Cross Entropy)", loss_bce_src, prog_bar=True)
 
@@ -378,6 +379,7 @@ class MainNetwork(pl.LightningModule):
             
             contrastive_embedding = self.contr_head(concat_feature_embed)
 
+            _, concat_predictions = torch.max(concat_predictions, 1)
             contrastive_loss = self.sup_contr_loss(contrastive_embedding, concat_masks, concat_predictions)
 
             self.log("Training Contrastive Loss", contrastive_loss, prog_bar=True)
@@ -478,12 +480,13 @@ class MainNetwork(pl.LightningModule):
                 else:
                     print("Using no tsne")
 
+            _, segmentation_mask_prediction_val = torch.max(segmentation_mask_prediction_val, 1)
             contrastive_loss = self.sup_contr_loss(contrastive_embedding, mask_val, segmentation_mask_prediction_val)
 
             self.log("Validation Contrastive Loss", contrastive_loss, on_step=False, on_epoch=True)
 
         else:
-            contrastive_loss = None
+            contrastive_loss = 0
         
         overall_loss_val = val_loss+contrastive_loss
         self.log("Overall Loss Validation", overall_loss_val, prog_bar=True)

@@ -234,12 +234,13 @@ class PixelContrastLoss(nn.Module, ABC):
         labels (torch.tensor): labels (coarse or normal) of size [batch_size, 1, H*, W*] (coarse) or [batch_size, 1, H, W] (normal) - in the case of normal, labels will get downscaled to H*, W*
         predict (torch.tensor): predict (coarse or normal) of size [batch_size, 1, H*, W*] (coarse) or [batch_size, 1, H, W] (normal) - in the case of normal, predict will get downscaled to H*, W*
         """
-        # labels = labels.unsqueeze(1).float().clone()
+
         labels = torch.nn.functional.interpolate(labels,
                                                  (feats.shape[2], feats.shape[3]), mode='nearest')
         labels = labels.squeeze(1).long()
         assert labels.shape[-1] == feats.shape[-1], '{} {}'.format(labels.shape, feats.shape)
 
+        predict = predict.unsqueeze(1).float().clone()
         predict = torch.nn.functional.interpolate(predict,
                                             (feats.shape[2], feats.shape[3]), mode='nearest')
         predict = predict.squeeze(1).long()
