@@ -19,7 +19,9 @@ def main():
                                 path_to_test=wandb.config.test_data_path, coarse_segmentation=wandb.config.coarse_segmentation_size, load_size=256,
                                 batch_size=wandb.config.batch_size, num_workers=wandb.config.num_workers)
 
-    checkpoint_callback = ModelCheckpoint(save_top_k=1, dirpath=wandb.config.checkpoint_dir, monitor="Validation Loss (BCE)", mode="min")
+    checkpoint_dir = f"{wandb.config.checkpoint_dir}_{wandb.config.run_name}_model_type{wandb.config.model_type}_lr{wandb.config.lr}_contr_lambda_{wandb.config.contrastive_lambda}_contr_head_type_{wandb.config.contr_head_type}_temperature_{wandb.config.temperature}"
+
+    checkpoint_callback = ModelCheckpoint(save_top_k=1, dirpath=checkpoint_dir, monitor="Validation Loss (BCE)", mode="min")
 
     lr_monitor = LearningRateMonitor(logging_interval='epoch')
 
