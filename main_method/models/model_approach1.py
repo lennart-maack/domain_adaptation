@@ -488,7 +488,7 @@ class MainNetwork(pl.LightningModule):
         else:
             contrastive_loss = 0
         
-        overall_loss_val = val_loss+contrastive_loss
+        overall_loss_val = val_loss + self.contrastive_lambda * contrastive_loss
         self.log("Overall Loss Validation", overall_loss_val, prog_bar=True)
 
         ### Section for test data (target data) ###
