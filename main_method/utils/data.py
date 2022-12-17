@@ -222,11 +222,13 @@ class CustomDataset(torch.utils.data.Dataset):
                 # A.HueSaturationValue(p=0.4),
                 A.Flip(p=0.5),
                 A.Rotate(p=0.3),
-                A.ElasticTransform(p=0.4, alpha_affine=15, interpolation=1, border_mode=0, value=0, mask_value=0),
+                # A.ElasticTransform(p=0.4, alpha_affine=15, interpolation=1, border_mode=0, value=0, mask_value=0),
                 # A.Normalize(mean=(0.485, 0.456, 0.406), std=(0.229, 0.224, 0.225)),
                 ToTensorV2(),
             ]
         )
+
+        print("Train augmentations: ", self.train_transforms)
 
         self.test_transforms = A.Compose(
             [
