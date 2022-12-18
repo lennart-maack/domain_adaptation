@@ -16,6 +16,8 @@
     "model_type": "dilated",
     "contr_head_type": "contr_head_1",
     
+    "max_samples": 2048,
+    "max_views": 100,
     "max_epochs": 2,
     "device": "cpu",
     "debug": true,
