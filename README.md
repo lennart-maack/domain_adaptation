@@ -22,6 +22,12 @@ Run the following command to install all needed requirements. At best, create a 
 pip install -r requirements.txt
 ```
 
+If you experience the error "ImportError: DLL load failed while importing _iterative: %1 is not a valid Win32 application." run the following
+```
+pip install --upgrade --force-reinstall scipy
+```
+
+
 ## Dataset
 
 You should structure your dataset (train and test) in the following way:
