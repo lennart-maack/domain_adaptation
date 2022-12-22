@@ -79,7 +79,7 @@ def convrelu(in_channels, out_channels, kernel, padding):
 
 
 class Dilated_Decoder(nn.Module):
-    def __init__(self, num_classes=1):
+    def __init__(self, num_classes=2):
         super().__init__()
 
         self.num_classes = num_classes
@@ -252,6 +252,7 @@ class MainNetwork(pl.LightningModule):
         self.seg_metric = Dice()
         self.seg_metric_test = Dice()
         self.seg_metric_test_during_val = Dice()
+        self.cross_entropy_loss = torch.nn.CrossEntropyLoss()
         self.sup_contr_loss = PixelContrastLoss(temperature=wandb_configs.temperature, base_temperature=wandb_configs.base_temperature, max_samples=wandb_configs.max_samples, max_views=wandb_configs.max_views)
         self.visualize_tsne = wandb_configs.visualize_tsne
 
@@ -353,13 +354,23 @@ class MainNetwork(pl.LightningModule):
         # Compute the BCE loss using the source image
         segmentation_mask_prediction_src, layer4_output_src = self(img_source)
 
-        loss_bce_src = F.binary_cross_entropy_with_logits(segmentation_mask_prediction_src, mask_source)
-        self.log("Training Loss - Source (Binary Cross Entropy)", loss_bce_src, prog_bar=True)
+        # loss_bce_src = F.binary_cross_entropy_with_logits(segmentation_mask_prediction_src, mask_source)
+        print()
+        print("segmentation_mask_prediction_src.type", segmentation_mask_prediction_src.dtype)
+        print("mask_source.type", mask_source.dtype)
+        print()
+
+        loss_ce_src = self.cross_entropy_loss(segmentation_mask_prediction_src, mask_source)
+        
+        self.log("Training Loss - Source (Cross Entropy)", loss_ce_src, prog_bar=True)
 
         # 4. Feed the source->target style image into the model to get prediction and latent representation (layer4_output_src_in_trgt)
         segmentation_mask_prediction_src_in_trgt, layer4_output_src_in_trgt = self(src_in_trg)
-        loss_bce_src_in_trgt = F.binary_cross_entropy_with_logits(segmentation_mask_prediction_src_in_trgt, mask_source)
-        self.log("Training Loss - Source in Target (Binary Cross Entropy)", loss_bce_src_in_trgt, prog_bar=True)
+
+        # loss_bce_src_in_trgt = F.binary_cross_entropy_with_logits(segmentation_mask_prediction_src_in_trgt, mask_source)
+        loss_ce_src_in_trgt = self.cross_entropy_loss(segmentation_mask_prediction_src_in_trgt, mask_source)
+        
+        self.log("Training Loss - Source in Target (Binary Cross Entropy)", loss_ce_src_in_trgt, prog_bar=True)
 
         # 5. Use both the latent feature representation from source and source_in_target to create a concatenated latent feature representation
         ## Concat the two latent feature embeddings
@@ -383,11 +394,11 @@ class MainNetwork(pl.LightningModule):
             contrastive_loss = self.sup_contr_loss(contrastive_embedding, concat_masks, concat_predictions)
 
             self.log("Training Contrastive Loss", contrastive_loss, prog_bar=True)
-            loss = 0.75 * loss_bce_src + 0.75 * loss_bce_src_in_trgt + self.contrastive_lambda * contrastive_loss + 0.005 * loss_ent
+            loss = 0.75 * loss_ce_src + 0.75 * loss_ce_src_in_trgt + self.contrastive_lambda * contrastive_loss + 0.005 * loss_ent
             self.log("Overall Loss Training", loss, prog_bar=True)
 
         else:
-            loss = 0.75 * loss_bce_src + 0.75 * loss_bce_src_in_trgt + 0.005 * loss_ent
+            loss = 0.75 * loss_ce_src + 0.75 * loss_ce_src_in_trgt + 0.005 * loss_ent
             self.log("Overall Loss Training", loss, prog_bar=True)
 
         return loss
@@ -425,7 +436,7 @@ class MainNetwork(pl.LightningModule):
 
             for idx in self.index_range:
 
-                seg_mask = wandb.Image(F_vision.to_pil_image(mask_val[idx][0]).convert("L"))
+                seg_mask = wandb.Image(F_vision.to_pil_image(mask_val[idx].float()).convert("L"))
                 
                 # Get the prediction output (normal and sigmoid) as wandb.Image for logging
                 output_sigmoid = torch.sigmoid(segmentation_mask_prediction_val)
@@ -453,9 +464,10 @@ class MainNetwork(pl.LightningModule):
         ###############################
 
 
-        val_loss = F.binary_cross_entropy_with_logits(segmentation_mask_prediction_val, mask_val)
+        # val_loss = F.binary_cross_entropy_with_logits(segmentation_mask_prediction_val, mask_val)
+        val_loss = self.cross_entropy_loss(segmentation_mask_prediction_val, mask_val)
         self.seg_metric.update(segmentation_mask_prediction_val, mask_val.to(dtype=torch.uint8))
-        self.log("Validation Loss (BCE)", val_loss, on_step=False, on_epoch=True)
+        self.log("Validation Loss", val_loss, on_step=False, on_epoch=True)
 
         ### Contrastive Section ###
         if self.contr_head_type != "no_contr_head":
@@ -503,12 +515,10 @@ class MainNetwork(pl.LightningModule):
     def validation_epoch_end(self, outs):
         # outs is a list of whatever you returned in `validation_step`
         
-        # loss = torch.stack([outs[0]["val_loss"]]).mean()
         dice = self.seg_metric.compute()
         print()
         print("Dice: ", dice)
         print()
-        # self.log("Validation Loss (Binary Cross Entropy)", loss, prog_bar=True)
         self.log("Dice Score (Validation)", dice, prog_bar=True)
         self.seg_metric.reset()
 
@@ -544,7 +554,7 @@ class MainNetwork(pl.LightningModule):
             for idx in self.index_range:
 
                 # Get the true Segmentation Mask as wandb.Image for logging
-                seg_mask = wandb.Image(F_vision.to_pil_image(mask[idx][0]).convert("L"))
+                seg_mask = wandb.Image(F_vision.to_pil_image(mask[idx].float()).convert("L"))
                 
                 # Get the prediction output (normal and sigmoid) as wandb.Image for logging
                 output_sigmoid = torch.sigmoid(segmentation_mask_prediction)

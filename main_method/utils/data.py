@@ -268,7 +268,7 @@ class CustomDataset(torch.utils.data.Dataset):
             image, mask = self.apply_transforms(image, mask)
             mask = mask/255
             mask = torch.round(mask)
-            mask = mask.view([1, mask.size()[0], mask.size()[1]])
+            mask = mask.view([mask.size()[0], mask.size()[1]]).long()
 
             return (image, mask)
 
