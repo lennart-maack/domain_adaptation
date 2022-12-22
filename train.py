@@ -70,8 +70,8 @@ if __name__ == "__main__":
 
     # Arguments for model and training settings
     parser.add_argument("--model_type", type=str, choices=["normal", "dilated"] , help="What type of backbone is used, either normal or dilated ResNet18")
-    parser.add_argument("--coarse_prediction_type", type=str, default="no_coarse", choices=["no_coarse", "linear", "mlp"], help="which type of coarse prediction should be used")
-    parser.add_argument("--coarse_segmentation_size", type=int, default=None, help="Size of the coarse segmentation after the dilated backbone - this is only important to load the train, val and test images in the correct size for evaluation")
+    # parser.add_argument("--coarse_prediction_type", type=str, default="no_coarse", choices=["no_coarse", "linear", "mlp"], help="which type of coarse prediction should be used")
+    # parser.add_argument("--coarse_segmentation_size", type=int, default=None, help="Size of the coarse segmentation after the dilated backbone - this is only important to load the train, val and test images in the correct size for evaluation")
     parser.add_argument("--contr_head_type", type=str, default="no_contr_head", choices=["no_contr_head", "contr_head_1"], help="which type of contr head is used to create the feature vector fead into contrastive loss")
     # parser.add_argument("--using_full_decoder", action='store_true', help="If true a normal encoder is used (encoding to original seg mask size, if false no normal encoder is used")
     parser.add_argument("--max_epochs", default=150, type=int, help="maximum epochs for training")
