@@ -16,7 +16,7 @@ import wandb
 def main():
 
     dm = DataModuleSegmentation(path_to_train_source=wandb.config.path_to_train, path_to_train_target=wandb.config.path_to_train_target, domain_adaptation=wandb.config.domain_adaptation,
-                                path_to_test=wandb.config.test_data_path, coarse_segmentation=wandb.config.coarse_segmentation_size, load_size=256,
+                                path_to_test=wandb.config.test_data_path, load_size=256,
                                 batch_size=wandb.config.batch_size, num_workers=wandb.config.num_workers)
 
     checkpoint_dir = f"{wandb.config.checkpoint_dir}_{wandb.config.run_name}_model_type{wandb.config.model_type}_lr{wandb.config.lr}_contr_lambda_{wandb.config.contrastive_lambda}_contr_head_type_{wandb.config.contr_head_type}_temperature_{wandb.config.temperature}"
