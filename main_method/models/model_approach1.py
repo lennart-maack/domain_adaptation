@@ -355,10 +355,6 @@ class MainNetwork(pl.LightningModule):
         segmentation_mask_prediction_src, layer4_output_src = self(img_source)
 
         # loss_bce_src = F.binary_cross_entropy_with_logits(segmentation_mask_prediction_src, mask_source)
-        print()
-        print("segmentation_mask_prediction_src.type", segmentation_mask_prediction_src.dtype)
-        print("mask_source.type", mask_source.dtype)
-        print()
 
         loss_ce_src = self.cross_entropy_loss(segmentation_mask_prediction_src, mask_source)
         
