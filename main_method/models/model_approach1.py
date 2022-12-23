@@ -253,6 +253,7 @@ class MainNetwork(pl.LightningModule):
         self.seg_metric_test = Dice(num_classes=2, average="macro")
         self.seg_metric_test_during_val = Dice(num_classes=2, average="macro")
         self.cross_entropy_loss = torch.nn.CrossEntropyLoss()
+        self.cross_entropy_loss_pseudo = torch.nn.CrossEntropyLoss(reduce=False)
         self.sup_contr_loss = PixelContrastLoss(temperature=wandb_configs.temperature, base_temperature=wandb_configs.base_temperature, max_samples=wandb_configs.max_samples, max_views=wandb_configs.max_views)
         self.visualize_tsne = wandb_configs.visualize_tsne
 
@@ -271,6 +272,16 @@ class MainNetwork(pl.LightningModule):
             
         else:
             raise NotImplementedError("Choose a valid model_type")
+
+
+        ###########################################################
+        # Choose if FDA should be used
+        self.apply_FDA = wandb_configs.apply_FDA
+
+        ###########################################################
+        # Choose if self learning should be used
+        self.use_self_learning = wandb_configs.use_self_learning 
+        self.use_target_for_contr = wandb_configs.use_target_for_contr
 
         ###########################################################
         # Choosing the contrastive head type to use
@@ -319,202 +330,116 @@ class MainNetwork(pl.LightningModule):
 
     def training_step(self, batch, batch_idx):
 
-        # batch consists of only source images -> batch= img, mask
 
-            # 0. Load images as batches
+        # 0. Load images as batches
         batch_source = batch["loader_source"]
         batch_target = batch["loader_target"]
 
         img_source, mask_source = batch_source
         img_target, _ = batch_target
         
-        #----------------------------------------------------------------------------------------#
-        # 1. transforming the source image to the target style as in FDA by Yang et al. 
-        src_in_trg = FDA_source_to_target(img_source, img_target, L=0.01)
 
-        # 2. Compute the Entropy Loss from the target image (Needed for Regularization with Charbonnier penalty function)
-        ## Is it needed to calculate softmax etc. if it is 1 class only anyway? --> I apply sigmoid here/Have a look on how the out values look like!!
-        out = self(img_target)[0] # shape of out is: B, 1 (N_Classes), 256 (H), 256 (W)
-        # P = F.softmax(out, dim=1)        # [B, 19, H, W] (from paper), in our case: [B, 1, H, W] 
-        P = F.sigmoid(out)
-        # logP = F.log_softmax(out, dim=1) # [B, 19, H, W] (from paper), in our case: [B, 1, H, W]
-        logP = F.logsigmoid(out)
-        PlogP = P * logP               # [B, 19, H, W] (from paper), in our case: [B, 1, H, W]
-        ent = -1.0 * PlogP.sum(dim=1)  # [B, 1, H, W] (from paper)
-        # ent = ent / 2.9444         # chanage when classes is not 19 (from paper), we leave out this line?? 
-        
-        # compute robust entropy/Charbonnier penalty function
-        ent = ent ** 2.0 + 1e-8
-        eta = 2.0
-        ent = ent ** eta
-        loss_ent = ent.mean()
-        self.log("Training Entropy Loss (Charbonnier)", loss_ent, prog_bar=True)
-
-        # 3. Feed the source image into the model to get prediction and latent representation (layer4_output_src)
-        # Compute the BCE loss using the source image
+        # 1. Calculate CE loss - source img 
         segmentation_mask_prediction_src, layer4_output_src = self(img_source)
-
-        # loss_bce_src = F.binary_cross_entropy_with_logits(segmentation_mask_prediction_src, mask_source)
-
         loss_ce_src = self.cross_entropy_loss(segmentation_mask_prediction_src, mask_source)
-        
         self.log("Training Loss - Source (Cross Entropy)", loss_ce_src, prog_bar=True)
 
-        # 4. Feed the source->target style image into the model to get prediction and latent representation (layer4_output_src_in_trgt)
-        segmentation_mask_prediction_src_in_trgt, layer4_output_src_in_trgt = self(src_in_trg)
 
-        # loss_bce_src_in_trgt = F.binary_cross_entropy_with_logits(segmentation_mask_prediction_src_in_trgt, mask_source)
-        loss_ce_src_in_trgt = self.cross_entropy_loss(segmentation_mask_prediction_src_in_trgt, mask_source)
-        
-        self.log("Training Loss - Source in Target (Cross Entropy)", loss_ce_src_in_trgt, prog_bar=True)
+        # 2. Calculate FDA transformed source img and FDA entropy loss
+        if self.apply_FDA:
 
-        # 5. Use both the latent feature representation from source and source_in_target to create a concatenated latent feature representation
-        ## Concat the two latent feature embeddings
-        feature_embed_list = [layer4_output_src, layer4_output_src_in_trgt]
-        concat_feature_embed = torch.cat(feature_embed_list, dim=0)
-        ## Concat the two corresponding masks
-        mask_list = [mask_source, mask_source]
-        concat_masks = torch.cat(mask_list, dim=0)
-        ## Concat the two predcitions
-        pred_list = [segmentation_mask_prediction_src, segmentation_mask_prediction_src_in_trgt]
-        concat_predictions = torch.cat(pred_list, dim=0)
-
-
-        if self.contr_head_type != "no_contr_head":
+            src_in_trg = FDA_source_to_target(img_source, img_target, L=0.01)
             
-            # downscale the prediction or use the coarse prediction could be implemented - until now we use the coarse prediction and the coarse mask
-            
-            contrastive_embedding = self.contr_head(concat_feature_embed)
+            loss_ent = self._calculate_FDA_loss_ent(img_target)
+            self.log("Training Entropy Loss (Charbonnier)", loss_ent, prog_bar=True)
 
-            _, concat_predictions = torch.max(concat_predictions, 1)
-            contrastive_loss = self.sup_contr_loss(contrastive_embedding, concat_masks, concat_predictions)
-
-            self.log("Training Contrastive Loss", contrastive_loss, prog_bar=True)
-            loss = 0.75 * loss_ce_src + 0.75 * loss_ce_src_in_trgt + self.contrastive_lambda * contrastive_loss + 0.005 * loss_ent
-            self.log("Overall Loss Training", loss, prog_bar=True)
+            segmentation_mask_prediction_src_in_trgt, layer4_output_src_in_trgt = self(src_in_trg)
+            loss_ce_src_in_trgt = self.cross_entropy_loss(segmentation_mask_prediction_src_in_trgt, mask_source)
+            self.log("Training Loss - Source in Target (Cross Entropy)", loss_ce_src_in_trgt, prog_bar=True)
 
         else:
-            loss = 0.75 * loss_ce_src + 0.75 * loss_ce_src_in_trgt + 0.005 * loss_ent
-            self.log("Overall Loss Training", loss, prog_bar=True)
+            loss_ce_src_in_trgt = 0
+            loss_ent = 0
 
-        return loss
+        # 3. Calculate CE loss - target img with pseudo_labels
+        if self.use_self_learning:
+            if self.current_epoch > 30:
+                segmentation_mask_prediction_trgt, layer4_output_trgt = self(img_target)
+                pseudo_mask_target = torch.argmax(segmentation_mask_prediction_trgt, 1)
+                max_pred, max_indices = torch.max(segmentation_mask_prediction_trgt, 1)
+                m_t = (max_pred > 0.9).long()
+                initial_pseudo_target_loss = self.cross_entropy_loss_pseudo(segmentation_mask_prediction_trgt, pseudo_mask_target)
+                confidence_pseudo_target_loss_matrix = torch.multiply(initial_pseudo_target_loss, m_t)
+                numerator = torch.sum(confidence_pseudo_target_loss_matrix)
+                denom = torch.count_nonzero(confidence_pseudo_target_loss_matrix)
+                confidence_pseudo_target_loss = numerator/denom
+            else:
+                confidence_pseudo_target_loss = 0
+        else:
+            confidence_pseudo_target_loss = 0
+
+        # 4. Calculate Contrastive Loss
+        if self.contr_head_type != "no_contr_head":
+
+            if self.apply_FDA:
+                if self.use_self_learning and self.use_target_for_contr:
+
+                    contrastive_loss = self._get_contr_loss(layer4_output_src, segmentation_mask_prediction_src, mask_source, 
+                                                        layer4_output_src_in_trgt, segmentation_mask_prediction_src_in_trgt,
+                                                        layer4_output_trgt, segmentation_mask_prediction_trgt, pseudo_mask_target, m_t)
+                    self.log("Training Contrastive Loss", contrastive_loss, prog_bar=True)
+
+                else:
+                    contrastive_loss = self._get_contr_loss(layer4_output_src, segmentation_mask_prediction_src, mask_source, 
+                                                            layer4_output_src_in_trgt, segmentation_mask_prediction_src_in_trgt)
+                    self.log("Training Contrastive Loss", contrastive_loss, prog_bar=True)
+
+            else:
+                contrastive_loss = self._get_contr_loss(layer4_output_src, segmentation_mask_prediction_src, mask_source)
+                self.log("Training Contrastive Loss", contrastive_loss, prog_bar=True)
+        else:
+            contrastive_loss = 0    
+        
+
+        overall_loss = loss_ce_src + loss_ce_src_in_trgt + 0.01 * loss_ent + confidence_pseudo_target_loss + self.contrastive_lambda * contrastive_loss
+        self.log("Overall Loss Training", overall_loss, prog_bar=True)
+
+        return overall_loss
+
+
 
     def validation_step(self, batch, batch_idx):
 
-        batch_test = batch["loader_target_test"]
+        # 1. Calculate CE Loss and Dice Score on source validation data
         batch_val = batch["loader_val_source"]
-
         img_val, mask_val = batch_val # mask.size(): [bs, 256, 256]
-
+        
         segmentation_mask_prediction_val, feature_embedding_val = self(img_val)
-
-        ## Section for visualization ##
-        if batch_idx == 0 and self.current_epoch % 4 == 0:
-
-            # creates tSNE visualisation for a minibatch for the latent feature embedding and the embedding after contrastive head 
-            # --> could be extended for a complete batch
-            if self.visualize_tsne:
-                # perplexity = 30
-                print("Creating tsne with perplex 30 - latent vector")
-                perplexity = 30
-                df_tsne = create_tsne(feature_embedding_val, mask_val, pca_n_comp=50, perplexity=perplexity)
-                fig = plt.figure(figsize=(10,10))
-                sns_plot = sns.scatterplot(x="tsne-one", y="tsne-two", hue="label", data=df_tsne)
-                fig = sns_plot.get_figure()
-                fig.savefig(f"tSNE_vis_perplex_{perplexity}.jpg")
-                tsne_img = cv2.imread(f"tSNE_vis_perplex_{perplexity}.jpg")
-                tSNE_image_30 = wandb.Image(PIL.Image.fromarray(tsne_img))
-
-            else:
-                print("Using no tsne")
-                tSNE_image_30 = None
-
-
-            for idx in self.index_range:
-
-                seg_mask = wandb.Image(F_vision.to_pil_image(mask_val[idx].float()).convert("L"))
-                
-                # Get the prediction output (normal and sigmoid) as wandb.Image for logging
-                output_sigmoid = torch.sigmoid(segmentation_mask_prediction_val)
-                output_segmap_sigmoid = wandb.Image(F_vision.to_pil_image(output_sigmoid[idx][0]).convert("L"))
-
-                # Get the true images for logging
-                input_image = wandb.Image(F_vision.to_pil_image(img_val[idx]))
-
-                wandb.log({
-                        # f"Feature Embedding {idx}": grid_array,
-                        # f"Feature Embedding Sigmoid {idx}": grid_array_sigmoid,
-                        # f"Coarse True Segmentation Mask {idx}": coarse_seg_mask,
-                        f"True Segmentation Mask {idx}": seg_mask,
-                        f"Prediction Output Sigmoid {idx}": output_segmap_sigmoid,
-                        f"Input image {idx}": input_image,
-                        f"tSNE visualization perplex 30 {idx}": tSNE_image_30
-                        })
-                
-                if img_val.size(0) <= idx:
-                    print()
-                    print("index would be out of range, so leaving")
-                    print()
-                    break
-
-        ###############################
-
-
-        # val_loss = F.binary_cross_entropy_with_logits(segmentation_mask_prediction_val, mask_val)
         val_loss = self.cross_entropy_loss(segmentation_mask_prediction_val, mask_val)
         self.seg_metric.update(segmentation_mask_prediction_val, mask_val.to(dtype=torch.uint8))
         self.log("Validation CE Loss", val_loss, on_step=False, on_epoch=True)
 
-        ### Contrastive Section ###
-        if self.contr_head_type != "no_contr_head":
-            # downscale the prediction or use the coarse prediction could be implemented - until now we use the coarse prediction and the coarse mask
-            contrastive_embedding = self.contr_head(feature_embedding_val)
-
-            if batch_idx == 0 and self.current_epoch % 4 == 0:
-                
-                if self.visualize_tsne:
-                    # creates tSNE visualisation for a minibatch --> could be extended for a complete batch
-                    # perplexity = 30
-                    print("Creating tsne with perplex 30")
-                    perplexity = 30
-                    df_tsne = create_tsne(contrastive_embedding, mask_val, pca_n_comp=50, perplexity=perplexity)
-                    fig = plt.figure(figsize=(10,10))
-                    sns_plot = sns.scatterplot(x="tsne-one", y="tsne-two", hue="label", data=df_tsne)
-                    fig = sns_plot.get_figure()
-                    fig.savefig(f"tSNE_vis_contr_embed_perplex_{perplexity}.jpg")
-                    tsne_img = cv2.imread(f"tSNE_vis_contr_embed_perplex_{perplexity}.jpg")
-                    tSNE_image_contr = wandb.Image(PIL.Image.fromarray(tsne_img))
-                    wandb.log({f"tSNE visualization contrastive embedding perplex 30 {idx}": tSNE_image_contr})
-                else:
-                    print("Using no tsne")
-
-            _, segmentation_mask_prediction_val = torch.max(segmentation_mask_prediction_val, 1)
-            contrastive_loss = self.sup_contr_loss(contrastive_embedding, mask_val, segmentation_mask_prediction_val)
-
-            self.log("Validation Contrastive Loss", contrastive_loss, on_step=False, on_epoch=True)
-
-        else:
-            contrastive_loss = 0
-        
-        overall_loss_val = val_loss + self.contrastive_lambda * contrastive_loss
-        self.log("Overall Loss Validation", overall_loss_val, prog_bar=True)
-
-        ### Section for test data (target data) ###
+        # 2. Calculate Dice Score on target test data
+        batch_test = batch["loader_target_test"]
         img_test, mask_test = batch_test
 
         segmentation_mask_prediction_test, _ = self(img_test)
-
         self.seg_metric_test_during_val.update(segmentation_mask_prediction_test, mask_test.to(dtype=torch.uint8))
 
-        return {"val_loss": val_loss, "Validation Contrastive Loss": contrastive_loss}
+        # 3. Section for visualization
+        if batch_idx == 0 and self.current_epoch % 4 == 0:
+            
+            if self.visualize_tsne:
+                self._visualize_tsne(feature_embedding_val, mask_val, pca_n_comp=50, perplexity=30)
+            
+            self._visualize_plots(mask_val, segmentation_mask_prediction_val, img_val)
+
+        return {"val_loss": val_loss}
 
     def validation_epoch_end(self, outs):
         # outs is a list of whatever you returned in `validation_step`
         
         dice = self.seg_metric.compute()
-        print()
-        print("Dice: ", dice)
-        print()
         self.log("Dice Score (Validation)", dice, prog_bar=True)
         self.seg_metric.reset()
 
@@ -528,76 +453,109 @@ class MainNetwork(pl.LightningModule):
         img, mask = batch # mask.size(): [bs, 1, 256, 256]
 
         segmentation_mask_prediction, feature_embedding = self(img)
-
         self.seg_metric_test.update(segmentation_mask_prediction, mask.to(dtype=torch.uint8))        
 
-        if batch_idx == 0:
-
-            # creates tSNE visualisation for a minibatch --> could be extended for a complete batch
-            
-            # # perplexity = 30
-            # print("Creating tsne with perplex 30 for test images")
-            # perplexity = 30
-            # df_tsne = create_tsne(feature_embedding, mask_coarse, pca_n_comp=50, perplexity=perplexity)
-            # fig = plt.figure(figsize=(10,10))
-            # sns_plot = sns.scatterplot(x="tsne-one", y="tsne-two", hue="label", data=df_tsne)
-            # fig = sns_plot.get_figure()
-            # fig.savefig(f"TEST_tSNE_vis_perplex_{perplexity}.jpg")
-            # img = cv2.imread(f"TEST_tSNE_vis_perplex_{perplexity}.jpg")
-            # tSNE_image_30 = wandb.Image(PIL.Image.fromarray(img))
-            tSNE_image_30 = None
-
-            for idx in self.index_range:
-
-                # Get the true Segmentation Mask as wandb.Image for logging
-                seg_mask = wandb.Image(F_vision.to_pil_image(mask[idx].float()).convert("L"))
-                
-                # Get the prediction output (normal and sigmoid) as wandb.Image for logging
-                output_sigmoid = torch.sigmoid(segmentation_mask_prediction)
-                output_segmap_sigmoid = wandb.Image(F_vision.to_pil_image(output_sigmoid[idx][0]).convert("L"))
-
-                # Get the true images for logging
-                input_image = wandb.Image(F_vision.to_pil_image(img[idx]))
-
-                wandb.log({
-                        f"TEST_True Segmentation Mask {idx}": seg_mask,
-                        f"TEST_Prediction Output Sigmoid {idx}": output_segmap_sigmoid,
-                        f"TEST_Input image {idx}": input_image,
-                        f"TEST_tSNE visualization perplex 30 {idx}": tSNE_image_30
-                        })
-
-                if img.size(0) <= idx:
-                    print()
-                    print("index would be out of range, so leaving")
-                    print()
-                    break
-
-
-        if self.contr_head_type != "no_contr_head":
-            
-            # downscale the prediction or use the coarse prediction could be implemented - until now we use the coarse prediction and the coarse mask
-            
-            contrastive_embedding = self.contr_head(feature_embedding)
-
-            # if batch_idx == 0:
-                
-            #     # creates tSNE visualisation for a minibatch --> could be extended for a complete batch
-            #     # perplexity = 30
-            #     print("Creating tsne with perplex 30 for test after contrastive head")
-            #     perplexity = 30
-            #     df_tsne = create_tsne(contrastive_embedding, mask_coarse, pca_n_comp=50, perplexity=perplexity)
-            #     fig = plt.figure(figsize=(10,10))
-            #     sns_plot = sns.scatterplot(x="tsne-one", y="tsne-two", hue="label", data=df_tsne)
-            #     fig = sns_plot.get_figure()
-            #     fig.savefig(f"TEST_tSNE_vis_contr_embed_perplex_{perplexity}.jpg")
-            #     img = cv2.imread(f"TEST_tSNE_vis_contr_embed_perplex_{perplexity}.jpg")
-            #     tSNE_image_contr = wandb.Image(PIL.Image.fromarray(img))
-            #     wandb.log({f"TEST_tSNE visualization contrastive embedding perplex 30 {idx}": tSNE_image_contr})
 
     def test_epoch_end(self, outs):
         # outs is a list of whatever you returned in `validation_step`
 
         seg_metric_test = self.seg_metric_test.compute()
-        print("seg_metric_test", seg_metric_test)
         self.log("FINAL Dice Score on Target Test Data", seg_metric_test, prog_bar=True)
         self.seg_metric_test.reset()
+
+
+
+
+    def _calculate_FDA_loss_ent(self, image_target):
+
+        # 2. Compute the Entropy Loss from the target image (Needed for Regularization with Charbonnier penalty function)
+        ## Is it needed to calculate softmax etc. if it is 1 class only anyway? --> I apply sigmoid here/Have a look on how the out values look like!!
+        out = self(image_target)[0] # shape of out is: B, 1 (N_Classes), 256 (H), 256 (W)
+        # P = F.softmax(out, dim=1)        # [B, 19, H, W] (from paper), in our case: [B, 1, H, W] 
+        P = F.sigmoid(out)
+        # logP = F.log_softmax(out, dim=1) # [B, 19, H, W] (from paper), in our case: [B, 1, H, W]
+        logP = F.logsigmoid(out)
+        PlogP = P * logP               # [B, 19, H, W] (from paper), in our case: [B, 1, H, W]
+        ent = -1.0 * PlogP.sum(dim=1)  # [B, 1, H, W] (from paper)
+        # ent = ent / 2.9444         # chanage when classes is not 19 (from paper), we leave out this line?? 
+        
+        # compute robust entropy/Charbonnier penalty function
+        ent = ent ** 2.0 + 1e-8
+        eta = 2.0
+        ent = ent ** eta
+        loss_ent = ent.mean()
+
+        return loss_ent
+
+
+    def _get_contr_loss(self, layer4_output_src, segmentation_mask_prediction_src, mask_source, 
+                        layer4_output_src_in_trgt=None, segmentation_mask_prediction_src_in_trgt=None,
+                        layer4_output_trgt = None, segmentation_mask_prediction_trgt = None, pseudo_mask_target = None, m_t = None):
+
+        if layer4_output_src_in_trgt is not None and segmentation_mask_prediction_src_in_trgt is not None:
+            # 5. Use both the latent feature representation from source and source_in_target to create a concatenated latent feature representation
+            ## Concat the two latent feature embeddings
+            feature_embed_list = [layer4_output_src, layer4_output_src_in_trgt]
+            concat_feature_embed = torch.cat(feature_embed_list, dim=0)
+            ## Concat the two corresponding masks
+            mask_list = [mask_source, mask_source]
+            concat_masks = torch.cat(mask_list, dim=0)
+            ## Concat the two predcitions
+            pred_list = [segmentation_mask_prediction_src, segmentation_mask_prediction_src_in_trgt]
+            concat_predictions = torch.cat(pred_list, dim=0)
+
+            # downscale the prediction or use the coarse prediction could be implemented - until now we use the coarse prediction and the coarse mask
+            contrastive_embedding = self.contr_head(concat_feature_embed)
+
+            _, concat_predictions = torch.max(concat_predictions, 1)
+            contrastive_loss = self.sup_contr_loss(contrastive_embedding, concat_masks, concat_predictions)
+
+        else:
+            contrastive_embedding_src = self.contr_head(layer4_output_src)
+            predictions = torch.max(segmentation_mask_prediction_src, 1)
+            contrastive_loss = self.sup_contr_loss(contrastive_embedding_src, mask_source, predictions)
+
+        return contrastive_loss
+
+
+    def _visualize_tsne(self, feature_embedding_val, mask_val, pca_n_comp=50, perplexity=30):
+
+        df_tsne = create_tsne(feature_embedding_val, mask_val, pca_n_comp=pca_n_comp, perplexity=perplexity)
+        fig = plt.figure(figsize=(10,10))
+        sns_plot = sns.scatterplot(x="tsne-one", y="tsne-two", hue="label", data=df_tsne)
+        fig = sns_plot.get_figure()
+        fig.savefig(f"tSNE_vis_perplex_{perplexity}.jpg")
+        tsne_img = cv2.imread(f"tSNE_vis_perplex_{perplexity}.jpg")
+        tSNE_image = wandb.Image(PIL.Image.fromarray(tsne_img))
+
+        wandb.log({f"tSNE visualization perplex {perplexity}": tSNE_image})
+
+
+
+    def _visualize_plots(self, mask_val, segmentation_mask_prediction_val, img_val):
+
+        for idx in self.index_range:
+
+            seg_mask = wandb.Image(F_vision.to_pil_image(mask_val[idx].float()).convert("L"))
+            
+            # Get the prediction output (normal and sigmoid) as wandb.Image for logging
+            output_sigmoid = torch.sigmoid(segmentation_mask_prediction_val)
+            output_segmap_sigmoid = wandb.Image(F_vision.to_pil_image(output_sigmoid[idx][0]).convert("L"))
+
+            # Get the true images for logging
+            input_image = wandb.Image(F_vision.to_pil_image(img_val[idx]))
+
+            wandb.log({
+                    # f"Feature Embedding {idx}": grid_array,
+                    # f"Feature Embedding Sigmoid {idx}": grid_array_sigmoid,
+                    # f"Coarse True Segmentation Mask {idx}": coarse_seg_mask,
+                    f"True Segmentation Mask {idx}": seg_mask,
+                    f"Prediction Output Sigmoid {idx}": output_segmap_sigmoid,
+                    f"Input image {idx}": input_image,
+                    })
+            
+            if img_val.size(0) <= idx:
+                print()
+                print("index would be out of range, so leaving")
+                print()
+                break

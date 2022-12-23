@@ -21,7 +21,7 @@ def main():
 
     checkpoint_dir = f"{wandb.config.checkpoint_dir}_{wandb.config.run_name}_model_type{wandb.config.model_type}_lr{wandb.config.lr}_contr_lambda_{wandb.config.contrastive_lambda}_contr_head_type_{wandb.config.contr_head_type}_temperature_{wandb.config.temperature}"
 
-    checkpoint_callback = ModelCheckpoint(save_top_k=1, dirpath=checkpoint_dir, monitor="Validation Loss (BCE)", mode="min")
+    checkpoint_callback = ModelCheckpoint(save_top_k=1, dirpath=checkpoint_dir, monitor="Overall Loss Training", mode="min")
 
     lr_monitor = LearningRateMonitor(logging_interval='epoch')
 
@@ -72,6 +72,9 @@ if __name__ == "__main__":
     parser.add_argument("--model_type", type=str, choices=["normal", "dilated"] , help="What type of backbone is used, either normal or dilated ResNet18")
     # parser.add_argument("--coarse_prediction_type", type=str, default="no_coarse", choices=["no_coarse", "linear", "mlp"], help="which type of coarse prediction should be used")
     # parser.add_argument("--coarse_segmentation_size", type=int, default=None, help="Size of the coarse segmentation after the dilated backbone - this is only important to load the train, val and test images in the correct size for evaluation")
+    parser.add_argument("--apply_FDA", type=bool, default=False, help="Set to True explicitly if you want to use FDA as style transfer step")
+    parser.add_argument("--use_self_learning", type=bool, default=False, help="Set to True explicitly if you want to use self-learning with pseudo target labels")
+    parser.add_argument("--use_target_for_contr", type=bool, default=True, help="Set to True explicitly if you want to use target features for contr. loss")
     parser.add_argument("--contr_head_type", type=str, default="no_contr_head", choices=["no_contr_head", "contr_head_1"], help="which type of contr head is used to create the feature vector fead into contrastive loss")
     # parser.add_argument("--using_full_decoder", action='store_true', help="If true a normal encoder is used (encoding to original seg mask size, if false no normal encoder is used")
     parser.add_argument("--max_epochs", default=150, type=int, help="maximum epochs for training")
