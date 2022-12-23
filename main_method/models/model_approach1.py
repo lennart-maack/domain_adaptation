@@ -373,6 +373,7 @@ class MainNetwork(pl.LightningModule):
                 numerator = torch.sum(confidence_pseudo_target_loss_matrix)
                 denom = torch.count_nonzero(confidence_pseudo_target_loss_matrix)
                 confidence_pseudo_target_loss = numerator/denom
+                self.log("Training Loss - Target (Cross Entropy)", confidence_pseudo_target_loss, prog_bar=True)
             else:
                 confidence_pseudo_target_loss = 0
         else:
@@ -380,20 +381,23 @@ class MainNetwork(pl.LightningModule):
 
         # 4. Calculate Contrastive Loss
         if self.contr_head_type != "no_contr_head":
-
+            
             if self.apply_FDA:
+                # Feature embeddings of source, sourceToTarget and target are to be used !!!!----> NEEDS TO BE FINISHED!!!!
                 if self.use_self_learning and self.use_target_for_contr:
 
                     contrastive_loss = self._get_contr_loss(layer4_output_src, segmentation_mask_prediction_src, mask_source, 
                                                         layer4_output_src_in_trgt, segmentation_mask_prediction_src_in_trgt,
                                                         layer4_output_trgt, segmentation_mask_prediction_trgt, pseudo_mask_target, m_t)
                     self.log("Training Contrastive Loss", contrastive_loss, prog_bar=True)
-
+                
+                # Feature embeddings of source and sourceToTarget are to be used
                 else:
                     contrastive_loss = self._get_contr_loss(layer4_output_src, segmentation_mask_prediction_src, mask_source, 
                                                             layer4_output_src_in_trgt, segmentation_mask_prediction_src_in_trgt)
                     self.log("Training Contrastive Loss", contrastive_loss, prog_bar=True)
-
+            
+            # Feature embeddings of source are to be used
             else:
                 contrastive_loss = self._get_contr_loss(layer4_output_src, segmentation_mask_prediction_src, mask_source)
                 self.log("Training Contrastive Loss", contrastive_loss, prog_bar=True)
