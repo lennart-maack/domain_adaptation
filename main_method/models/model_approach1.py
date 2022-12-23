@@ -170,7 +170,7 @@ class Contrastive_Head(nn.Module):
 
 class Normal_Decoder(nn.Module):
 
-    def __init__(self, num_classes=1):
+    def __init__(self, num_classes=2):
         super().__init__()
 
         self.num_classes = num_classes
@@ -249,9 +249,9 @@ class MainNetwork(pl.LightningModule):
         self.contr_head_type = wandb_configs.contr_head_type
 
         self.learning_rate = wandb_configs.lr
-        self.seg_metric = Dice()
-        self.seg_metric_test = Dice()
-        self.seg_metric_test_during_val = Dice()
+        self.seg_metric = Dice(num_classes=2, average="macro")
+        self.seg_metric_test = Dice(num_classes=2, average="macro")
+        self.seg_metric_test_during_val = Dice(num_classes=2, average="macro")
         self.cross_entropy_loss = torch.nn.CrossEntropyLoss()
         self.sup_contr_loss = PixelContrastLoss(temperature=wandb_configs.temperature, base_temperature=wandb_configs.base_temperature, max_samples=wandb_configs.max_samples, max_views=wandb_configs.max_views)
         self.visualize_tsne = wandb_configs.visualize_tsne
@@ -366,7 +366,7 @@ class MainNetwork(pl.LightningModule):
         # loss_bce_src_in_trgt = F.binary_cross_entropy_with_logits(segmentation_mask_prediction_src_in_trgt, mask_source)
         loss_ce_src_in_trgt = self.cross_entropy_loss(segmentation_mask_prediction_src_in_trgt, mask_source)
         
-        self.log("Training Loss - Source in Target (Binary Cross Entropy)", loss_ce_src_in_trgt, prog_bar=True)
+        self.log("Training Loss - Source in Target (Cross Entropy)", loss_ce_src_in_trgt, prog_bar=True)
 
         # 5. Use both the latent feature representation from source and source_in_target to create a concatenated latent feature representation
         ## Concat the two latent feature embeddings
@@ -404,7 +404,7 @@ class MainNetwork(pl.LightningModule):
         batch_test = batch["loader_target_test"]
         batch_val = batch["loader_val_source"]
 
-        img_val, mask_val = batch_val # mask.size(): [bs, 1, 256, 256]
+        img_val, mask_val = batch_val # mask.size(): [bs, 256, 256]
 
         segmentation_mask_prediction_val, feature_embedding_val = self(img_val)
 
@@ -463,7 +463,7 @@ class MainNetwork(pl.LightningModule):
         # val_loss = F.binary_cross_entropy_with_logits(segmentation_mask_prediction_val, mask_val)
         val_loss = self.cross_entropy_loss(segmentation_mask_prediction_val, mask_val)
         self.seg_metric.update(segmentation_mask_prediction_val, mask_val.to(dtype=torch.uint8))
-        self.log("Validation Loss", val_loss, on_step=False, on_epoch=True)
+        self.log("Validation CE Loss", val_loss, on_step=False, on_epoch=True)
 
         ### Contrastive Section ###
         if self.contr_head_type != "no_contr_head":
