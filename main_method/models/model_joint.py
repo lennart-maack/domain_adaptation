@@ -1,13 +1,3 @@
-"""
-
-This approach uses:
-
-1. Contrastive Learning, using only SegContrSegLos, with x^s, x^s->t in one minibatch
-2. FDA as Style Transfer Head
-3. No generation of pseudo labels (yet)
-
-"""
-
 import torch
 from torch import nn
 from torch.autograd import forward_ad
@@ -254,6 +244,7 @@ class MainNetwork(pl.LightningModule):
         self.seg_metric_test_during_val = Dice(num_classes=2, average="macro")
         self.cross_entropy_loss = torch.nn.CrossEntropyLoss()
         self.cross_entropy_loss_pseudo = torch.nn.CrossEntropyLoss(reduce=False)
+        self.ssl_threshold = wandb_configs.ssl_threshold
         self.sup_contr_loss = PixelContrastLoss(temperature=wandb_configs.temperature, base_temperature=wandb_configs.base_temperature, max_samples=wandb_configs.max_samples, max_views=wandb_configs.max_views)
         self.visualize_tsne = wandb_configs.visualize_tsne
 
@@ -363,16 +354,21 @@ class MainNetwork(pl.LightningModule):
 
         # 3. Calculate CE loss - target img with pseudo_labels
         if self.use_self_learning:
-            if self.current_epoch > 30:
+            if self.current_epoch % 3 != 0:
                 segmentation_mask_prediction_trgt, layer4_output_trgt = self(img_target)
+                segmentation_mask_prediction_trgt = torch.nn.Softmax2d()(segmentation_mask_prediction_trgt)
                 pseudo_mask_target = torch.argmax(segmentation_mask_prediction_trgt, 1)
-                max_pred, max_indices = torch.max(segmentation_mask_prediction_trgt, 1)
-                m_t = (max_pred > 0.9).long()
-                initial_pseudo_target_loss = self.cross_entropy_loss_pseudo(segmentation_mask_prediction_trgt, pseudo_mask_target)
-                confidence_pseudo_target_loss_matrix = torch.multiply(initial_pseudo_target_loss, m_t)
-                numerator = torch.sum(confidence_pseudo_target_loss_matrix)
-                denom = torch.count_nonzero(confidence_pseudo_target_loss_matrix)
-                confidence_pseudo_target_loss = numerator/denom
+                # max_pred, max_indices = torch.max(segmentation_mask_prediction_trgt, 1)
+                # m_t = (max_pred > self.ssl_threshold).long()
+                ## ES KÖNNTE SEIN DASS m_t falsche size hat (anstatt 256, 256 nur 256)!
+                # initial_pseudo_target_loss = self.cross_entropy_loss_pseudo(segmentation_mask_prediction_trgt, pseudo_mask_target)
+                # confidence_pseudo_target_loss_matrix = torch.multiply(initial_pseudo_target_loss, m_t)
+                # numerator = torch.sum(confidence_pseudo_target_loss_matrix)
+                # denom = torch.count_nonzero(confidence_pseudo_target_loss_matrix)
+                # confidence_pseudo_target_loss = numerator/denom
+
+                initial_pseudo_target_loss = self.cross_entropy_loss(segmentation_mask_prediction_trgt, pseudo_mask_target)
+                confidence_pseudo_target_loss = initial_pseudo_target_loss
                 self.log("Training Loss - Target (Cross Entropy)", confidence_pseudo_target_loss, prog_bar=True)
             else:
                 confidence_pseudo_target_loss = 0
