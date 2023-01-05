@@ -20,48 +20,56 @@ def create_tsne(feature_embedding, segmentation_mask, pca_n_comp, verbose=0, per
     feature_embedding = feature_embedding.cpu().numpy()
     segmentation_mask = segmentation_mask.cpu().numpy()
 
-    # Downsample the segmentation mask to the size of the feature embedding
-    segmentation_mask = torch.nn.functional.interpolate(segmentation_mask,
-                                                 (feature_embedding.shape[2], feature_embedding.shape[3]), mode='nearest')
-
-    assert (feature_embedding.shape[2], feature_embedding.shape[3]) == (segmentation_mask.shape[2], segmentation_mask.shape[3]), "feature_embedding and segmentation_mask have to have the same shape"
+    assert (feature_embedding[0].shape[2], feature_embedding[0].shape[3]) == (segmentation_mask[0].shape[1], segmentation_mask[0].shape[2]), "feature_embedding and segmentation_mask have to have the same shape"
 
     features_for_single_pixel = np.empty(0)
     list_of_dataframes = list()
 
-    feat_cols = [ 'feature'+str(i) for i in range(feature_embedding.shape[1])]
+    feat_cols = [ 'feature'+str(i) for i in range(feature_embedding[0].shape[1])]
     feat_cols.append("label")
 
-    # looping through the minibatch/feature maps per image
-    for i in range(feature_embedding.shape[0]):
+    # looping through the three or two domains (either src, src_to_trgt, trgt or src, src_to_trgt)
+    for domain in range(feature_embedding.shape[0]):
+        # looping through the minibatch/feature maps per image
+        for i in range(feature_embedding.shape[1]):
 
-        # create an empty dataframe with the columns feature_0 to feature_'len(feature_embedding.shape[1])' and one last label column
-        df = pd.DataFrame(columns=feat_cols)
-        
-        # looping through the spatial feature dimension
-        for x in range(feature_embedding.shape[2]):
-            for y in range(feature_embedding.shape[3]):
-                for j in range(feature_embedding.shape[1]):
-                    # appends the np.array containing the D features for each individual pixel
-                    features_for_single_pixel = np.append(features_for_single_pixel, feature_embedding[i][j][x][y])
-                if segmentation_mask[i][0][x][y] == 0:
-                    # append dataframe with a row and columns containing features in features_for_single_pixel (individually) and one label "background"
-                    features_for_single_pixel = np.append(features_for_single_pixel, 0)
-                    df = pd.concat([df, pd.DataFrame(features_for_single_pixel.reshape(1,-1), columns=list(df))], ignore_index=True)
-                elif segmentation_mask[i][0][x][y] == 1:
-                    # append dataframe with a row and columns containing features in features_for_single_pixel (individually) and one label "polyp"
-                    features_for_single_pixel = np.append(features_for_single_pixel, 1)
-                    df = pd.concat([df, pd.DataFrame(features_for_single_pixel.reshape(1,-1), columns=list(df))], ignore_index=True)
-                else:
-                    raise ValueError("The value of segmentation_mask is neither 0 nor 1 but has to be one of either")
-                
-                features_for_single_pixel = np.empty(0)
-        list_of_dataframes.append(df)
+            # create an empty dataframe with the columns feature_0 to feature_'len(feature_embedding.shape[1])' and one last label column
+            df = pd.DataFrame(columns=feat_cols)
+            
+            # looping through the spatial feature dimension
+            for x in range(feature_embedding.shape[3]):
+                for y in range(feature_embedding.shape[4]):
+                    for j in range(feature_embedding.shape[2]):
+                        # appends the np.array containing the D features for each individual pixel
+                        features_for_single_pixel = np.append(features_for_single_pixel, feature_embedding[domain][i][j][x][y])
+                    if segmentation_mask[domain][i][x][y] == 0:
+                        # append dataframe with a row and columns containing features in features_for_single_pixel (individually) and one label "background"
+                        if domain == 0: # domain 0 : source domain
+                            features_for_single_pixel = np.append(features_for_single_pixel, 0)
+                        elif domain == 1: # domain 1 : src_to_trgt domain
+                            features_for_single_pixel = np.append(features_for_single_pixel, 2)
+                        elif domain == 2: # domain 2 : trgt domain
+                            features_for_single_pixel = np.append(features_for_single_pixel, 4)
+                        df = pd.concat([df, pd.DataFrame(features_for_single_pixel.reshape(1,-1), columns=list(df))], ignore_index=True)
+                    elif segmentation_mask[domain][i][x][y] == 1:
+                        # append dataframe with a row and columns containing features in features_for_single_pixel (individually) and one label "polyp"
+                        if domain == 0: # domain 0 : source domain
+                            features_for_single_pixel = np.append(features_for_single_pixel, 1)
+                        elif domain == 1: # domain 1 : src_to_trgt domain
+                            features_for_single_pixel = np.append(features_for_single_pixel, 3)
+                        elif domain == 2: # domain 2 : trgt domain
+                            features_for_single_pixel = np.append(features_for_single_pixel, 5)
+                        df = pd.concat([df, pd.DataFrame(features_for_single_pixel.reshape(1,-1), columns=list(df))], ignore_index=True)
+                    else:
+                        raise ValueError("The value of segmentation_mask is neither 0 nor 1 but has to be one of either")
+                    
+                    features_for_single_pixel = np.empty(0)
+            list_of_dataframes.append(df)
 
     # Concat all dataframes (length is equal to batch size) containing a dataframe of features for each pixel and label to one big dataframe
     df_concat = pd.concat([df for df in list_of_dataframes], ignore_index=True)
 
-    feat_cols = [ 'feature'+str(i) for i in range(feature_embedding.shape[1])]
+    feat_cols = [ 'feature'+str(i) for i in range(feature_embedding[0].shape[1])]
     np_value_subset = df_concat[feat_cols].values
 
     pca = PCA(n_components=pca_n_comp)
