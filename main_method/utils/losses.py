@@ -167,7 +167,7 @@ class PixelContrastLoss(nn.Module, ABC):
                 else:
                     # Log.info('this shoud be never touched! {} {} {}'.format(num_hard, num_easy, n_view))
                     raise Exception
-
+                
                 perm = torch.randperm(num_hard)
                 hard_indices = hard_indices[perm[:num_hard_keep]]
                 perm = torch.randperm(num_easy)
@@ -257,4 +257,181 @@ class PixelContrastLoss(nn.Module, ABC):
         feats_, labels_ = self._hard_anchor_sampling(feats, labels, predict)
 
         loss = self._contrastive(feats_, labels_)
+        return loss
+
+
+
+class PixelContrastLoss_Pretrain(nn.Module, ABC):
+    def __init__(self, temperature, base_temperature, max_samples, max_views):
+        super(PixelContrastLoss_Pretrain, self).__init__()
+        
+        self.temperature = temperature
+        self.base_temperature = base_temperature
+
+        self.ignore_label = -1
+        
+        self.max_samples = max_samples
+        self.max_views = max_views
+
+
+    def _anchor_sampling(self, X, y_hat, m_t=None):
+
+        batch_size, feat_dim = X.shape[0], X.shape[-1]
+
+        classes = []
+        total_classes = 0
+        for ii in range(batch_size):
+            this_y = y_hat[ii]
+            this_classes = torch.unique(this_y)
+            this_classes = [x for x in this_classes if x != self.ignore_label]
+            this_classes = [x for x in this_classes if (this_y == x).nonzero().shape[0] > self.max_views]
+
+            classes.append(this_classes)
+            total_classes += len(this_classes)
+
+        if total_classes == 0:
+            return None, None
+
+        n_view = self.max_samples // total_classes
+        n_view = min(n_view, self.max_views)
+
+        if torch.cuda.is_available():
+            X_ = torch.zeros((total_classes, n_view, feat_dim), dtype=torch.float).cuda()
+            y_ = torch.zeros(total_classes, dtype=torch.float).cuda()
+        else:
+            X_ = torch.zeros((total_classes, n_view, feat_dim), dtype=torch.float)
+            y_ = torch.zeros(total_classes, dtype=torch.float)
+
+        X_ptr = 0
+        n_empty_indices = 0
+
+        for ii in range(batch_size):
+
+            # Hier könnte man die m_t mask miteinbauen und nur die indexe mitreinbringen, bei denen m_t > 0.9 ist,
+            # Dafür müsste man auch m_t_src und m_t_src_in_trgt erstellen die alle 1 in sich haben, damit diese Pixel immer genutzt werden
+            # es müsste also ein neuer input m_t für diese method geben, welcher die gleiche size wie y_hat besitzt mit den ersten n batches (n = batches von source
+            # und batches von sourceToTarget) nur 1 enthält weil wir da 100% sicher sind dass die labels stimmen und für die restlichen m batches (m ist die Anzahl
+            # der batchtes für target) haben wir sowohl 1 als auch 0 damit nur die high confidence pixel embeddings genutzt werden 
+
+            this_y_hat = y_hat[ii]
+            this_classes = classes[ii]
+            if m_t is not None:
+                this_m_t = m_t[ii]
+
+            for cls_id in this_classes:
+                
+                # this_y_hat.size(): 1089
+                if m_t is not None:
+                    indices = ((this_y_hat == cls_id) & (this_m_t == torch.tensor(1))).nonzero()
+                    if indices.nelement() <= 50:
+                        n_empty_indices += 1
+                        continue
+                else:
+                    indices = (this_y_hat == cls_id).nonzero()
+
+                num = indices.shape[0]
+
+                num_keep = n_view
+                
+                perm = torch.randperm(num)
+                indices = indices[perm[:num_keep]]
+
+                X_[X_ptr, :, :] = X[ii, indices, :].squeeze(1)
+                y_[X_ptr] = cls_id
+                X_ptr += 1
+
+        if n_empty_indices != 0:
+            # Cut out all elements which are zero from X_
+            X_ = X_[:-n_empty_indices]
+            y_ = y_[:-n_empty_indices]
+
+        return X_, y_
+
+
+
+
+    def _contrastive(self, feats_, labels_):
+        anchor_num, n_view = feats_.shape[0], feats_.shape[1]
+
+        labels_ = labels_.contiguous().view(-1, 1)
+        if torch.cuda.is_available():
+            mask = torch.eq(labels_, torch.transpose(labels_, 0, 1)).float().cuda()
+        else:
+            mask = torch.eq(labels_, torch.transpose(labels_, 0, 1)).float()
+
+        contrast_count = n_view
+        contrast_feature = torch.cat(torch.unbind(feats_, dim=1), dim=0)
+
+        anchor_feature = contrast_feature
+        anchor_count = contrast_count
+
+        anchor_dot_contrast = torch.div(torch.matmul(anchor_feature, torch.transpose(contrast_feature, 0, 1)),
+                                        self.temperature)
+        logits_max, _ = torch.max(anchor_dot_contrast, dim=1, keepdim=True)
+        logits = anchor_dot_contrast - logits_max.detach()
+
+        mask = mask.repeat(anchor_count, contrast_count)
+        neg_mask = 1 - mask
+
+        if torch.cuda.is_available():
+            logits_mask = torch.ones_like(mask).scatter_(1,
+                                                        torch.arange(anchor_num * anchor_count).view(-1, 1).cuda(),
+                                                        0)
+        else:
+            logits_mask = torch.ones_like(mask).scatter_(1,
+                                                        torch.arange(anchor_num * anchor_count).view(-1, 1),
+                                                        0)
+
+        mask = mask * logits_mask
+
+        neg_logits = torch.exp(logits) * neg_mask
+        neg_logits = neg_logits.sum(1, keepdim=True)
+
+        exp_logits = torch.exp(logits)
+
+        log_prob = logits - torch.log(exp_logits + neg_logits)
+
+        mean_log_prob_pos = (mask * log_prob).sum(1) / mask.sum(1)
+
+        loss = - (self.temperature / self.base_temperature) * mean_log_prob_pos
+        loss = loss.mean()
+
+        return loss
+
+
+
+    def forward(self, feats, labels, m_t=None, len_target_embeddings=None):
+        """
+        feats (torch.tensor): feature embedding of size [batch_size, D, H*, W*] with D the number of features per pixel, H*,W* the hight and width of the feature embedding
+        labels (torch.tensor): labels (coarse or normal) of size [batch_size, 1, H*, W*] (coarse) or [batch_size, 1, H, W] (normal) - in the case of normal, labels will get downscaled to H*, W*
+        """
+
+        batch_size = feats.shape[0]
+
+        labels = labels.unsqueeze(1).float().clone()
+        labels = torch.nn.functional.interpolate(labels,
+                                                 (feats.shape[2], feats.shape[3]), mode='nearest')
+        labels = labels.squeeze(1).long()
+        assert labels.shape[-1] == feats.shape[-1], '{} {}'.format(labels.shape, feats.shape)
+        labels = labels.contiguous().view(batch_size, -1)
+
+        if m_t is not None:
+            m_t = m_t.unsqueeze(1).float().clone()
+            m_t = torch.nn.functional.interpolate(m_t,
+                                                    (feats.shape[2], feats.shape[3]), mode='nearest')
+            m_t = m_t.squeeze(1).long()
+            assert m_t.shape[-1] == feats.shape[-1], '{} {}'.format(m_t.shape, feats.shape)
+            m_t = m_t.contiguous().view(m_t.size(0), -1)
+
+        feats = feats.permute(0, 2, 3, 1)
+        feats = feats.contiguous().view(feats.shape[0], -1, feats.shape[-1])
+
+        if m_t is not None:
+            feats_, labels_ = self._anchor_sampling(feats, labels, m_t)
+
+        else:
+            feats_, labels_ = self._anchor_sampling(feats, labels)
+
+        loss = self._contrastive(feats_, labels_)
+
         return loss
