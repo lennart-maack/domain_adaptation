@@ -74,7 +74,7 @@ def split_data_into_train_val(path_to_train_source, split_ratio):
 
 
 class DataModuleSegmentation(pl.LightningDataModule):
-    def __init__(self, path_to_train_source=None, path_to_train_target=None, path_to_test=None, path_to_predict=None, coarse_segmentation=None, domain_adaptation=False, pseudo_labels=False, batch_size=16, load_size: int = 256, num_workers=2):
+    def __init__(self, path_to_train_source=None, path_to_train_target=None, use_pseudo_labels=False, path_to_test=None, path_to_predict=None, load_data_for_tsne=False, coarse_segmentation=None, domain_adaptation=False, pseudo_labels=False, batch_size=16, load_size: int = 256, num_workers=2):
         """
         Args:
             path_to_train_source (string): Path to the folder containing the folder to training images and corresponding training masks - source
@@ -85,7 +85,6 @@ class DataModuleSegmentation(pl.LightningDataModule):
             domain_adaptation (bool): 
                 True: Ff the DataModuleSegmentation is used as input for a domain_adaptation network (need of source AND target train data), 
                 False: Does only need one training dataset (set only path_to_train_source)
-            pseudo_labels (bool): Set to true if for the target dataset, pseudo labels are used for training. "path_to_train_target" needs to contain a pseudo_labels subfolder.
             batch_size (int): Batch size used for train, val, test, metrics calculation
             load_size (int): Size to which the images are rescaled - will be squared image
         """
@@ -103,15 +102,22 @@ class DataModuleSegmentation(pl.LightningDataModule):
         self.load_size = load_size
         self.batch_size = batch_size
 
-        self.pseudo_labels = pseudo_labels
+        self.use_pseudo_labels = use_pseudo_labels
+
+        self.load_data_for_tsne = load_data_for_tsne
+
         self.num_workers = num_workers
+        if self.path_to_predict is not None:
+            self.image_list_predict, self.mask_list_predict = get_img_mask_list(self.path_to_predict, "valid")
+
 
     def setup(self, stage=None):
 
         # path_to_predict must only be not None if you want to use a model + DataLoader for inference
         if self.path_to_predict is not None:
-            self.predict_data = CustomDataset(self.path_to_predict, transfo_for_train=False, load_size=self.load_size)
-            return
+
+            self.predict_data = CustomDataset(image_list=self.image_list_predict, mask_list=self.mask_list_predict, path=self.path_to_predict,
+                                                    transfo_for_train=False, load_size=self.load_size, coarse_segmentation=self.coarse_segmentation)
 
         ## Get image lists for train, val, test for each dataset according to data/csv
         ### Dataset names: CVC-EndoScene, ETIS-LaribPolypDB, KVASIR_SEG
@@ -131,7 +137,7 @@ class DataModuleSegmentation(pl.LightningDataModule):
 
             # setup target data
             self.train_data_target = CustomDataset(image_list=image_list_train_target, mask_list=mask_list_train_target, path=self.path_to_train_target, 
-                                                    transfo_for_train=False, load_size=self.load_size)
+                                                   use_pseudo_labels=self.use_pseudo_labels, transfo_for_train=True, load_size=self.load_size)
         
         # Need of only one dataset when NOT using domain_adaptation model (e.g. U-Net) - it is called train_data_source
         else:
@@ -158,13 +164,19 @@ class DataModuleSegmentation(pl.LightningDataModule):
 
     def val_dataloader(self):
 
-        loader_source = data.DataLoader(self.val_data_source, batch_size=self.batch_size, num_workers=self.num_workers)
+        loader_source = data.DataLoader(self.val_data_source, batch_size=self.batch_size, num_workers=self.num_workers, drop_last=True)
 
         if self.path_to_test is not None:
+            
+            loader_target_test = data.DataLoader(self.test_data, batch_size=self.batch_size, num_workers=self.num_workers, drop_last=True)
 
-            loader_target_test = data.DataLoader(self.test_data, batch_size=self.batch_size, num_workers=self.num_workers)
+            if self.domain_adaptation:
 
-            loaders = CombinedLoader({"loader_val_source": loader_source, "loader_target_test": loader_target_test}, mode="max_size_cycle")
+                loader_target_val = data.DataLoader(self.train_data_target, batch_size=self.batch_size, num_workers=self.num_workers, drop_last=True)
+                loaders = CombinedLoader({"loader_val_source": loader_source, "loader_target_val": loader_target_val, "loader_target_test": loader_target_test}, mode="max_size_cycle")
+
+            else:
+                loaders = CombinedLoader({"loader_val_source": loader_source, "loader_target_test": loader_target_test}, mode="max_size_cycle")
             
             return loaders
 
@@ -179,13 +191,20 @@ class DataModuleSegmentation(pl.LightningDataModule):
 
     def predict_dataloader(self):
 
-        loader_predict = data.DataLoader(self.predict_data, batch_size=self.batch_size, shuffle=False, num_workers=self.num_workers)
+        if self.load_data_for_tsne:
+            loader_source = data.DataLoader(self.val_data_source, shuffle=True, batch_size=self.batch_size, num_workers=self.num_workers)
+            loader_target_val = data.DataLoader(self.train_data_target, shuffle=True, batch_size=self.batch_size, num_workers=self.num_workers)
+            loaders = CombinedLoader({"loader_val_source": loader_source, "loader_target_val": loader_target_val}, mode="max_size_cycle")
+            return loaders
 
-        return loader_predict
+        else:
+            loader_predict = data.DataLoader(self.predict_data, batch_size=self.batch_size, shuffle=False, num_workers=self.num_workers)
+
+            return loader_predict
 
 
 class CustomDataset(torch.utils.data.Dataset):
-    def __init__(self, image_list, mask_list, path, transfo_for_train, pseudo_labels=False, load_size = 256, coarse_segmentation=None):
+    def __init__(self, image_list, mask_list, path, transfo_for_train, use_pseudo_labels=False, load_size = 256, coarse_segmentation=None):
         """
         Args:
             path (string): Path to the folder containing the folder to training images and corresponding training masks
@@ -196,23 +215,26 @@ class CustomDataset(torch.utils.data.Dataset):
         # Tryout
         self.images = image_list
         self.masks = mask_list
-        self.paths = (os.path.join(os.path.normpath(path), "images"), os.path.join(os.path.normpath(path), "masks"))
+        if use_pseudo_labels:
+            print("Using pseudo labels")
+            self.m_t = mask_list
+            self.paths = (os.path.join(os.path.normpath(path), "images"), os.path.join(os.path.normpath(path), "pseudo_labels"), os.path.join(os.path.normpath(path), "m_t"))
+            self.image_postfix, self.mask_postfix, self.m_t_postfix  = self.get_image_and_mask_postfix(self.paths, use_pseudo_labels=True)
+        else:
+            print("Using NO pseudo labels")
+            self.paths = (os.path.join(os.path.normpath(path), "images"), os.path.join(os.path.normpath(path), "masks"))
+            self.image_postfix, self.mask_postfix = self.get_image_and_mask_postfix(self.paths)
 
-
-        #####
-
-        # self.path = path
+        self.use_pseudo_labels = use_pseudo_labels
+        
         self.load_size = load_size
-
-        # self.images, self.masks, self.paths = self.list_images(pseudo_labels=pseudo_labels)
-        self.image_postfix, self.mask_postfix = self.get_image_and_mask_postfix(self.paths)
 
         self.transfo_for_train = transfo_for_train
 
         self.coarse_segmentation = coarse_segmentation 
 
         self.resize_transform = A.Resize(self.load_size, self.load_size)
-        self.create_coarse_seg_mask = A.Resize(self.coarse_segmentation, coarse_segmentation)
+        self.create_coarse_seg_mask = A.Resize(coarse_segmentation, coarse_segmentation)
 
         self.train_transforms = A.Compose(
             [
@@ -248,21 +270,22 @@ class CustomDataset(torch.utils.data.Dataset):
         mask = Image.open(os.path.join(os.path.normpath(self.paths[1]), f'{self.masks[idx]}{self.mask_postfix}')).convert("L") # if you get an error in this line, you might have .jpg images
         mask = numpy.array(mask)
 
-        if self.coarse_segmentation is not None:
+        if self.use_pseudo_labels:
+            m_t = Image.open(os.path.join(os.path.normpath(self.paths[2]), f'{self.m_t[idx]}{self.m_t_postfix}')).convert("L") # if you get an error in this line, you might have .jpg images
+            m_t = numpy.array(m_t)
 
-            image, mask, mask_coarse = self.apply_transforms(image, mask, coarse=True)
-            if type(mask) == numpy.ndarray and type(mask_coarse) == numpy.ndarray:
-                mask = torch.from_numpy(mask)
-                mask_coarse = torch.from_numpy(mask_coarse)
-            mask = mask/255
-            mask = torch.round(mask)
-            mask = mask.view([1, mask.size()[0], mask.size()[1]])
+            image, pseudo_mask, m_t =  self.apply_transforms(image, mask, m_t=m_t)
 
-            mask_coarse = mask_coarse/255
-            mask_coarse = torch.round(mask_coarse)
-            mask_coarse = mask_coarse.view([1, mask_coarse.size()[0], mask_coarse.size()[1]])
+            pseudo_mask = pseudo_mask/255
 
-            return (image, mask, mask_coarse)
+            pseudo_mask = torch.round(pseudo_mask)
+            pseudo_mask = pseudo_mask.view([pseudo_mask.size()[0], pseudo_mask.size()[1]]).long()
+
+            m_t = m_t/255
+            m_t = torch.round(m_t)
+            m_t = m_t.view([m_t.size()[0], m_t.size()[1]]).long()
+
+            return (image, pseudo_mask, m_t)
 
         else:
             image, mask = self.apply_transforms(image, mask)
@@ -272,70 +295,63 @@ class CustomDataset(torch.utils.data.Dataset):
 
             return (image, mask)
 
-    def get_image_and_mask_postfix(self, paths):
+    def get_image_and_mask_postfix(self, paths, use_pseudo_labels=False):
         
-        path_img, path_mask = paths
+
+        if use_pseudo_labels:
+            path_img, path_mask, path_m_t = paths
+            m_t_list = os.listdir(path_m_t)
+            m_t_postfix = os.path.splitext(os.path.basename(m_t_list[0]))[1]
+        else:
+            path_img, path_mask = paths
+        
         img_list = os.listdir(path_img)
         mask_list = os.listdir(path_mask)
+
         image_postfix = os.path.splitext(os.path.basename(img_list[0]))[1]
         mask_postfix = os.path.splitext(os.path.basename(mask_list[0]))[1]
 
-        return image_postfix, mask_postfix
+        if use_pseudo_labels:
+            return image_postfix, mask_postfix, m_t_postfix
+        else:
+            return image_postfix, mask_postfix
 
 
-    # def list_images(self, pseudo_labels):
 
-    #     path_img = os.path.join(os.path.normpath(self.path), "images") #, mode)
-    #     if pseudo_labels:
-    #         path_mask = os.path.join(os.path.normpath(self.path), "pseudo_labels") #, mode)
-    #     else:
-    #         path_mask = os.path.join(os.path.normpath(self.path), "masks") #, mode)
-    #     img_list = os.listdir(path_img)
-    #     mask_list = os.listdir(path_mask)
-
-    #     # img_list = [filename for filename in img_list if ".png" in filename or ".jpg" in filename]
-    #     img_list = [os.path.splitext(os.path.basename(filename))[0] for filename in img_list if ".png" in filename or ".jpg" in filename]
-    #     # mask_list = [filename for filename in mask_list if ".png" in filename or ".jpg" in filename]
-    #     mask_list = [os.path.splitext(os.path.basename(filename))[0] for filename in mask_list if ".png" in filename or ".jpg" in filename]
-    #     images = sorted(img_list, key=lambda x: float(x))
-    #     masks = sorted(mask_list, key=lambda x: float(x))
-    #     assert len(images)  == len(masks), "different len of images and masks %s - %s" % (len(images), len(masks))
-    #     for i in range(len(images)):
-    #         assert os.path.splitext(images[i])[0] == os.path.splitext(masks[i])[0], '%s and %s are not matching' % (images[i], masks[i])
-    #     return images, masks, (path_img, path_mask)
-
-    def apply_transforms(self, image, mask, coarse=False):
+    def apply_transforms(self, image, mask, m_t=None):
         
         if self.load_size is not None:
-            resized_transformed = self.resize_transform(image=image, mask=mask)
-            image = resized_transformed["image"]
-            mask = resized_transformed["mask"]
-        if coarse:
-            coarse_transformed = self.create_coarse_seg_mask(image=image, mask=mask)
-            mask_coarse = coarse_transformed["mask"]
+            if m_t is not None:
+                resized_transformed = self.resize_transform(image=image, masks=[mask, m_t])
+                image = resized_transformed["image"]
+                mask, m_t = resized_transformed["masks"]
+            else:
+                resized_transformed = self.resize_transform(image=image, mask=mask)
+                image = resized_transformed["image"]
+                mask = resized_transformed["mask"]
 
         if self.transfo_for_train:
-            if coarse:
-                transformed = self.train_transforms(image=image, masks=[mask, mask_coarse])
+            if m_t is not None:
+                transformed = self.train_transforms(image=image, masks=[mask, m_t])
                 image = transformed["image"]
-                mask, mask_coarse = transformed["masks"]
+                mask, m_t = transformed["masks"]
             else:
                 transformed = self.train_transforms(image=image, mask=mask)
                 image = transformed["image"]
                 mask = transformed["mask"]
-                
+
         else:
-            if coarse:
-                transformed = self.test_transforms(image=image, masks=[mask, mask_coarse])
+            if m_t is not None:
+                transformed = self.test_transforms(image=image, masks=[mask, m_t])
                 image = transformed["image"]
-                mask, mask_coarse = transformed["masks"]
+                mask, m_t = transformed["masks"]
             else:
                 transformed = self.test_transforms(image=image, mask=mask)
                 image = transformed["image"]
                 mask = transformed["mask"]
 
-        if coarse:
-            return image, mask, mask_coarse
+        if m_t is not None:
+            return image, mask, m_t
 
         else:
             return image, mask
