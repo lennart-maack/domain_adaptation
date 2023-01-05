@@ -127,6 +127,12 @@ class ResNetBackbone(object):
         arch_net.num_features = 512
         return arch_net
 
+    def resnet18_no_pretrained(self):
+        orig_resnet = self.resnet_models.resnet18_not_pretrained()
+        arch_net = NormalResnetBackbone(orig_resnet)
+        arch_net.num_features = 512
+        return arch_net
+
     def deepbase_resnet18(self):
         orig_resnet = self.resnet_models.deepbase_resnet18()
         arch_net = NormalResnetBackbone(orig_resnet)
@@ -135,6 +141,12 @@ class ResNetBackbone(object):
 
     def deepbase_resnet18_dilated8(self):
         orig_resnet = self.resnet_models.deepbase_resnet18()
+        arch_net = DilatedResnetBackbone(orig_resnet, dilate_scale=8, multi_grid=self.multi_grid)
+        arch_net.num_features = 512
+        return arch_net
+
+    def deepbase_resnet18_dilated8_no_pretrain(self):
+        orig_resnet = self.resnet_models.deepbase_resnet18_not_pretrained()
         arch_net = DilatedResnetBackbone(orig_resnet, dilate_scale=8, multi_grid=self.multi_grid)
         arch_net.num_features = 512
         return arch_net

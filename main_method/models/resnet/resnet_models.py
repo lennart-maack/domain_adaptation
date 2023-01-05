@@ -234,6 +234,11 @@ class ResNetModels(object):
         model = self._load_model(model, pretrained=self.model_urls["resnet18"])
         return model
 
+    def resnet18_not_pretrained(self, **kwargs):
+        model = ResNet(BasicBlock, [2, 2, 2, 2], deep_base=False, **kwargs)
+        print("Using a NON-pretrained (on ImageNet) model")
+        return model
+
     def deepbase_resnet18(self, **kwargs):
         """Constructs a ResNet-18 model.
         Args:
@@ -241,6 +246,13 @@ class ResNetModels(object):
         """
         model = ResNet(BasicBlock, [2, 2, 2, 2], deep_base=True, **kwargs)
         model = self._load_model(model, pretrained=self.model_urls["resnet18"])
+        return model
+
+    def deepbase_resnet18_not_pretrained(self, **kwargs):
+        """Constructs a ResNet-18 model.
+        """
+        model = ResNet(BasicBlock, [2, 2, 2, 2], deep_base=True, **kwargs)
+        print("Using a NON-pretrained (on ImageNet) model")
         return model
 
     def resnet34(self, **kwargs):
