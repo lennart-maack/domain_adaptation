@@ -662,7 +662,7 @@ class PreTrain(pl.LightningModule):
             df_minimized_backs = df_new.drop(drop_indices_back)
 
             ### Minimize amount of polyp sourceToTarget
-            num_src_to_trgt_to_cut = len(df_new.loc[(df_new['label'] == 3)]) * 0.66
+            num_src_to_trgt_to_cut = int(len(df_new.loc[(df_new['label'] == 3)]) * 0.66)
             drop_indices_src_to_trgt_polyp = np.random.choice(df_new.loc[(df_new['label'] == 3)].index, num_src_to_trgt_to_cut, replace=False)
             df_minimized_backs = df_minimized_backs.drop(drop_indices_src_to_trgt_polyp)
             ###
@@ -696,7 +696,7 @@ class PreTrain(pl.LightningModule):
             df_minimized_backs = df_new.drop(drop_indices_back)
 
             ### Minimize amount of polyp sourceToTarget
-            num_src_to_trgt_to_cut = len(df_new.loc[(df_new['label'] == "src to trgt - polyp")]) * 0.66
+            num_src_to_trgt_to_cut = int(len(df_new.loc[(df_new['label'] == "src to trgt - polyp")]) * 0.66)
             drop_indices_src_to_trgt_polyp = np.random.choice(df_new.loc[(df_new['label'] == "src to trgt - polyp")].index, num_src_to_trgt_to_cut, replace=False)
             df_minimized_backs = df_minimized_backs.drop(drop_indices_src_to_trgt_polyp)
             ###
@@ -1106,7 +1106,7 @@ class FineTune(pl.LightningModule):
             df_minimized_backs = df_new.drop(drop_indices_back)
 
             ### Minimize amount of polyp sourceToTarget
-            num_src_to_trgt_to_cut = len(df_new.loc[(df_new['label'] == 3)]) * 0.66
+            num_src_to_trgt_to_cut = int(len(df_new.loc[(df_new['label'] == 3)]) * 0.66)
             drop_indices_src_to_trgt_polyp = np.random.choice(df_new.loc[(df_new['label'] == 3)].index, num_src_to_trgt_to_cut, replace=False)
             df_minimized_backs = df_minimized_backs.drop(drop_indices_src_to_trgt_polyp)
             ###
@@ -1140,7 +1140,7 @@ class FineTune(pl.LightningModule):
             df_minimized_backs = df_new.drop(drop_indices_back)
 
             ### Minimize amount of polyp sourceToTarget
-            num_src_to_trgt_to_cut = len(df_new.loc[(df_new['label'] == "src to trgt - polyp")]) * 0.66
+            num_src_to_trgt_to_cut = int(len(df_new.loc[(df_new['label'] == "src to trgt - polyp")]) * 0.66)
             drop_indices_src_to_trgt_polyp = np.random.choice(df_new.loc[(df_new['label'] == "src to trgt - polyp")].index, num_src_to_trgt_to_cut, replace=False)
             df_minimized_backs = df_minimized_backs.drop(drop_indices_src_to_trgt_polyp)
             ###
