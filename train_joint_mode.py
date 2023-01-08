@@ -67,21 +67,22 @@ if __name__ == "__main__":
     parser.add_argument("--num_workers", default=2, type=int, help="num worker for dataloader")
 
 
-    # Arguments for model and training settings
-    parser.add_argument("--model_type", type=str, choices=["normal", "dilated"] , help="What type of backbone is used, either normal or dilated ResNet18")
-    # parser.add_argument("--coarse_prediction_type", type=str, default="no_coarse", choices=["no_coarse", "linear", "mlp"], help="which type of coarse prediction should be used")
-    # parser.add_argument("--coarse_segmentation_size", type=int, default=None, help="Size of the coarse segmentation after the dilated backbone - this is only important to load the train, val and test images in the correct size for evaluation")
-    parser.add_argument("--apply_FDA", type=bool, default=False, help="Set to True explicitly if you want to use FDA as style transfer step")
+    parser.add_argument("--pretrained_ImageNet", type=bool, default=True, help="If a pretrained ResNet on IMAGENET is used")
     parser.add_argument("--use_self_learning", type=bool, default=False, help="Set to True explicitly if you want to use self-learning with pseudo target labels")
+    parser.add_argument("--start_epoch_for_self_learning", default=0, type=int, help="If use_self_learning is true, this is set ")
     parser.add_argument("--ssl_threshold", type=float, default=0.9, help="Threshold confidence value to create pseudo labels")
     parser.add_argument("--use_target_for_contr", type=bool, default=True, help="Set to True explicitly if you want to use target features for contr. loss")
+    parser.add_argument("--contrastive_lambda", type=float, default=1.0, help="Coefficient used for the contrastive loss in the overall loss")
+    parser.add_argument("--use_confidence_threshold", type=bool, default=True, help="Set to True if you want to use m_t mask to calculate the ce loss for the target data using pseudo masks with confidence")
+    
+
+    # Arguments for model and training settings
+    parser.add_argument("--model_type", type=str, choices=["normal", "dilated"] , help="What type of backbone is used, either normal or dilated ResNet18")
+    parser.add_argument("--apply_FDA", type=bool, default=False, help="Set to True explicitly if you want to use FDA as style transfer step")
     parser.add_argument("--contr_head_type", type=str, default="no_contr_head", choices=["no_contr_head", "contr_head_1"], help="which type of contr head is used to create the feature vector fead into contrastive loss")
-    # parser.add_argument("--using_full_decoder", action='store_true', help="If true a normal encoder is used (encoding to original seg mask size, if false no normal encoder is used")
     parser.add_argument("--max_epochs", default=150, type=int, help="maximum epochs for training")
     parser.add_argument("--test_after_train", type=bool, help="if set to true and test data provided by test_data_path, the best model will be applied on test data")
     parser.add_argument("--lr", type=float, default=1e-3, help="Learning rate")
-    # parser.add_argument("--coarse_lambda", type=float, default=1.0, help="Coefficient used for the coarse loss in the overall loss")
-    parser.add_argument("--contrastive_lambda", type=float, default=1.0, help="Coefficient used for the contrastive loss in the overall loss")
     parser.add_argument("--device", default='gpu', type=str, help="device to train on")
 
 

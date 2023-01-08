@@ -252,13 +252,24 @@ class MainNetwork(pl.LightningModule):
         # Set the resNet Backbone + full Decoder
         self.resnet_backbones = ResNetBackbone()
         if wandb_configs.model_type == "dilated":
-            print("Using a dilated ResNet18 backbone", "\n")
-            self.encoder = self.resnet_backbones.deepbase_resnet18_dilated8()
+            if wandb_configs.pretrained_ImageNet:
+                print("Using a dilated ResNet18 backbone (pretrained)", "\n")
+                self.encoder = self.resnet_backbones.deepbase_resnet18_dilated8()
+            
+            else:
+                print("Using a dilated ResNet18 backbone (NOT pretrained)", "\n")
+                self.encoder = self.resnet_backbones.deepbase_resnet18_dilated8_no_pretrain()
             self.decoder = Dilated_Decoder()
 
         elif wandb_configs.model_type == "normal":
-            print("Using a normal ResNet18 backbone", "\n")
-            self.encoder = self.resnet_backbones.resnet18()
+            if wandb_configs.pretrained_ImageNet: 
+                print("Using a normal ResNet18 backbone (pretrained)", "\n")
+                self.encoder = self.resnet_backbones.resnet18()
+
+            else:
+                print("Using a normal ResNet18 backbone (NOT pretrained)", "\n")
+                self.encoder = self.resnet_backbones.resnet18_no_pretrained()
+
             self.decoder = Normal_Decoder()
             
         else:
@@ -272,6 +283,9 @@ class MainNetwork(pl.LightningModule):
         ###########################################################
         # Choose if self learning should be used
         self.use_self_learning = wandb_configs.use_self_learning 
+        self.start_epoch_for_self_learning = wandb_configs.start_epoch_for_self_learning
+        self.use_confidence_threshold = wandb_configs.use_confidence_threshold
+
         self.use_target_for_contr = wandb_configs.use_target_for_contr
 
         ###########################################################
@@ -284,6 +298,8 @@ class MainNetwork(pl.LightningModule):
             self.contr_head = Contrastive_Head(512, head_type=wandb_configs.contr_head_type)
         
         self.contrastive_lambda = wandb_configs.contrastive_lambda
+
+        self.use_contr_head_for_tsne = wandb_configs.use_contr_head_for_tsne
 
         ###########################################################
         # Index range which is used for the amount of images logged
@@ -354,21 +370,26 @@ class MainNetwork(pl.LightningModule):
 
         # 3. Calculate CE loss - target img with pseudo_labels
         if self.use_self_learning:
-            if self.current_epoch % 3 != 0:
+            if self.current_epoch >= self.start_epoch_for_self_learning:
                 segmentation_mask_prediction_trgt, layer4_output_trgt = self(img_target)
                 segmentation_mask_prediction_trgt = torch.nn.Softmax2d()(segmentation_mask_prediction_trgt)
                 pseudo_mask_target = torch.argmax(segmentation_mask_prediction_trgt, 1)
-                # max_pred, max_indices = torch.max(segmentation_mask_prediction_trgt, 1)
-                # m_t = (max_pred > self.ssl_threshold).long()
-                ## ES KÖNNTE SEIN DASS m_t falsche size hat (anstatt 256, 256 nur 256)!
-                # initial_pseudo_target_loss = self.cross_entropy_loss_pseudo(segmentation_mask_prediction_trgt, pseudo_mask_target)
-                # confidence_pseudo_target_loss_matrix = torch.multiply(initial_pseudo_target_loss, m_t)
-                # numerator = torch.sum(confidence_pseudo_target_loss_matrix)
-                # denom = torch.count_nonzero(confidence_pseudo_target_loss_matrix)
-                # confidence_pseudo_target_loss = numerator/denom
+                
+                if self.use_confidence_threshold:
+                    max_pred, max_indices = torch.max(segmentation_mask_prediction_trgt, 1)
+                    m_t = (max_pred > self.ssl_threshold).long()
+                    # ES KÖNNTE SEIN DASS m_t falsche size hat (anstatt 256, 256 nur 256)!
+                    initial_pseudo_target_loss = self.cross_entropy_loss_pseudo(segmentation_mask_prediction_trgt, pseudo_mask_target)
+                    confidence_pseudo_target_loss_matrix = torch.multiply(initial_pseudo_target_loss, m_t)
+                    numerator = torch.sum(confidence_pseudo_target_loss_matrix)
+                    # denom = torch.count_nonzero(confidence_pseudo_target_loss_matrix)
+                    denom = confidence_pseudo_target_loss_matrix.size(-1) * confidence_pseudo_target_loss_matrix.size(-2)
+                    confidence_pseudo_target_loss = numerator/denom
 
-                initial_pseudo_target_loss = self.cross_entropy_loss(segmentation_mask_prediction_trgt, pseudo_mask_target)
-                confidence_pseudo_target_loss = initial_pseudo_target_loss
+                else:
+                    confidence_pseudo_target_loss = self.cross_entropy_loss(segmentation_mask_prediction_trgt, pseudo_mask_target)
+
+
                 self.log("Training Loss - Target (Cross Entropy)", confidence_pseudo_target_loss, prog_bar=True)
             else:
                 confidence_pseudo_target_loss = 0
@@ -384,9 +405,9 @@ class MainNetwork(pl.LightningModule):
 
                     contrastive_loss = self._get_contr_loss(layer4_output_src, segmentation_mask_prediction_src, mask_source, 
                                                         layer4_output_src_in_trgt, segmentation_mask_prediction_src_in_trgt,
-                                                        layer4_output_trgt, segmentation_mask_prediction_trgt, pseudo_mask_target, m_t)
+                                                        layer4_output_trgt, segmentation_mask_prediction_trgt, pseudo_mask_target)
                     self.log("Training Contrastive Loss", contrastive_loss, prog_bar=True)
-                
+
                 # Feature embeddings of source and sourceToTarget are to be used
                 else:
                     contrastive_loss = self._get_contr_loss(layer4_output_src, segmentation_mask_prediction_src, mask_source, 
@@ -401,7 +422,9 @@ class MainNetwork(pl.LightningModule):
             contrastive_loss = 0    
         
 
-        overall_loss = loss_ce_src + loss_ce_src_in_trgt + 0.01 * loss_ent + confidence_pseudo_target_loss + self.contrastive_lambda * contrastive_loss
+        num_non_zero_losses = len([i for i, e in enumerate([loss_ce_src, loss_ce_src_in_trgt, confidence_pseudo_target_loss, loss_ent, contrastive_loss]) if e != 0])
+        overall_loss = (loss_ce_src + loss_ce_src_in_trgt + 0.01 * loss_ent+ confidence_pseudo_target_loss + self.contrastive_lambda * contrastive_loss)/num_non_zero_losses
+
         self.log("Overall Loss Training", overall_loss, prog_bar=True)
 
         return overall_loss
@@ -412,11 +435,11 @@ class MainNetwork(pl.LightningModule):
 
         # 1. Calculate CE Loss and Dice Score on source validation data
         batch_val = batch["loader_val_source"]
-        img_val, mask_val = batch_val # mask.size(): [bs, 256, 256]
+        img_val_src, mask_val_src = batch_val # mask.size(): [bs, 256, 256]
         
-        segmentation_mask_prediction_val, feature_embedding_val = self(img_val)
-        val_loss = self.cross_entropy_loss(segmentation_mask_prediction_val, mask_val)
-        self.seg_metric.update(segmentation_mask_prediction_val, mask_val.to(dtype=torch.uint8))
+        segmentation_mask_prediction_val, feature_embedding_val_src = self(img_val_src)
+        val_loss = self.cross_entropy_loss(segmentation_mask_prediction_val, mask_val_src)
+        self.seg_metric.update(segmentation_mask_prediction_val, mask_val_src.to(dtype=torch.uint8))
         self.log("Validation CE Loss", val_loss, on_step=False, on_epoch=True)
 
         # 2. Calculate Dice Score on target test data
@@ -426,13 +449,21 @@ class MainNetwork(pl.LightningModule):
         segmentation_mask_prediction_test, _ = self(img_test)
         self.seg_metric_test_during_val.update(segmentation_mask_prediction_test, mask_test.to(dtype=torch.uint8))
 
+        if self.apply_FDA:
+            batch_val_src_in_trgt = batch["loader_target_val"]
+            img_val_src_in_trgt, _ = batch_val_src_in_trgt
+            src_in_trg_val = FDA_source_to_target(img_val_src, img_val_src_in_trgt, L=0.01)
+            _, layer4_output_val_src_in_trgt = self(src_in_trg_val)
+
         # 3. Section for visualization
         if batch_idx == 0 and self.current_epoch % 4 == 0:
             
             if self.visualize_tsne:
-                self._visualize_tsne(feature_embedding_val, mask_val, pca_n_comp=50, perplexity=30)
+                self._visualize_tsne(feature_embedding_val_src=feature_embedding_val_src, 
+                                    feature_embedding_val_src_in_trgt=layer4_output_val_src_in_trgt,
+                                    mask_val_src=mask_val_src)
             
-            self._visualize_plots(mask_val, segmentation_mask_prediction_val, img_val)
+            self._visualize_plots(mask_val_src, segmentation_mask_prediction_val, img_val_src)
 
         return {"val_loss": val_loss}
 
@@ -490,21 +521,18 @@ class MainNetwork(pl.LightningModule):
 
     def _get_contr_loss(self, layer4_output_src, segmentation_mask_prediction_src, mask_source, 
                         layer4_output_src_in_trgt=None, segmentation_mask_prediction_src_in_trgt=None,
-                        layer4_output_trgt = None, segmentation_mask_prediction_trgt = None, pseudo_mask_target = None, m_t = None):
+                        layer4_output_trgt = None, segmentation_mask_prediction_trgt = None, pseudo_mask_target = None):
 
-        if layer4_output_src_in_trgt is not None and segmentation_mask_prediction_src_in_trgt is not None:
-            # 5. Use both the latent feature representation from source and source_in_target to create a concatenated latent feature representation
-            ## Concat the two latent feature embeddings
-            feature_embed_list = [layer4_output_src, layer4_output_src_in_trgt]
-            concat_feature_embed = torch.cat(feature_embed_list, dim=0)
-            ## Concat the two corresponding masks
-            mask_list = [mask_source, mask_source]
-            concat_masks = torch.cat(mask_list, dim=0)
-            ## Concat the two predcitions
-            pred_list = [segmentation_mask_prediction_src, segmentation_mask_prediction_src_in_trgt]
-            concat_predictions = torch.cat(pred_list, dim=0)
+        if layer4_output_src_in_trgt is not None:
+            concat_feature_embed = torch.cat([layer4_output_src, layer4_output_src_in_trgt], dim=0)
+            concat_masks = torch.cat([mask_source, mask_source], dim=0)
+            concat_predictions = torch.cat([segmentation_mask_prediction_src, segmentation_mask_prediction_src_in_trgt], dim=0)
 
-            # downscale the prediction or use the coarse prediction could be implemented - until now we use the coarse prediction and the coarse mask
+            if layer4_output_trgt is not None:
+                concat_feature_embed = torch.cat([concat_feature_embed, layer4_output_trgt], dim=0)
+                concat_masks = torch.cat([concat_masks, pseudo_mask_target], dim=0)
+                concat_predictions = torch.cat([concat_predictions, segmentation_mask_prediction_trgt], dim=0)
+
             contrastive_embedding = self.contr_head(concat_feature_embed)
 
             _, concat_predictions = torch.max(concat_predictions, 1)
@@ -518,18 +546,151 @@ class MainNetwork(pl.LightningModule):
         return contrastive_loss
 
 
-    def _visualize_tsne(self, feature_embedding_val, mask_val, pca_n_comp=50, perplexity=30):
+    def _visualize_tsne(self, feature_embedding_val_src, feature_embedding_val_src_in_trgt, mask_val_src, 
+                                    feature_embedding_val_trgt=None, pseudo_label_target=None,
+                                    pca_n_comp=50, perplexity=30):
 
-        df_tsne = create_tsne(feature_embedding_val, mask_val, pca_n_comp=pca_n_comp, perplexity=perplexity)
-        fig = plt.figure(figsize=(10,10))
-        sns_plot = sns.scatterplot(x="tsne-one", y="tsne-two", hue="label", data=df_tsne)
-        fig = sns_plot.get_figure()
-        fig.savefig(f"tSNE_vis_perplex_{perplexity}.jpg")
-        tsne_img = cv2.imread(f"tSNE_vis_perplex_{perplexity}.jpg")
-        tSNE_image = wandb.Image(PIL.Image.fromarray(tsne_img))
+            mask_val_src = mask_val_src.unsqueeze(1).float().clone()
+            mask_val_src = torch.nn.functional.interpolate(mask_val_src,
+                                                        (feature_embedding_val_src.shape[2], feature_embedding_val_src.shape[3]), mode='nearest')
+            mask_val_src = mask_val_src.squeeze(1).long()
 
-        wandb.log({f"tSNE visualization perplex {perplexity}": tSNE_image})
+            if pseudo_label_target is not None:
+                
+                if self.use_contr_head_for_tsne:
+                    feature_embedding_val_src, feature_embedding_val_src_in_trgt, feature_embedding_val_trgt = self._get_contr_feat_embeds(feature_embedding_val_src, 
+                                                                                                                                                    feature_embedding_val_src_in_trgt, 
+                                                                                                                                                    feature_embedding_val_trgt)
 
+                pseudo_label_target = pseudo_label_target.unsqueeze(1).float().clone()
+                pseudo_label_target = torch.nn.functional.interpolate(pseudo_label_target,
+                                                        (feature_embedding_val_src.shape[2], feature_embedding_val_src.shape[3]), mode='nearest')
+                pseudo_label_target = pseudo_label_target.squeeze(1).long()
+                concat_feature_embeds = torch.tensor([feature_embedding_val_src.cpu().numpy(), feature_embedding_val_src_in_trgt.cpu().numpy(), 
+                                                    feature_embedding_val_trgt.cpu().numpy()])
+                concat_labels = torch.tensor([mask_val_src.cpu().numpy(), mask_val_src.cpu().numpy(), pseudo_label_target.cpu().numpy()])
+                df_tsne = create_tsne(concat_feature_embeds, concat_labels, pca_n_comp=pca_n_comp, perplexity=perplexity)
+
+                df_tsne = self._clean_up_tsne(df_tsne, with_target_data=True)
+
+
+            else:
+                if self.use_contr_head_for_tsne:
+                    feature_embedding_val_src, feature_embedding_val_src_in_trgt= self._get_contr_feat_embeds(feature_embedding_val_src,
+                                                                                                                            feature_embedding_val_src_in_trgt)
+
+                concat_feature_embeds = torch.tensor([feature_embedding_val_src.cpu().numpy(), feature_embedding_val_src_in_trgt.cpu().numpy()])
+                concat_labels = torch.tensor([mask_val_src.cpu().numpy(), mask_val_src.cpu().numpy()])
+                df_tsne = create_tsne(concat_feature_embeds, concat_labels, pca_n_comp=pca_n_comp, perplexity=perplexity)
+                
+                df_tsne = self._clean_up_tsne(df_tsne, with_target_data=False)
+
+
+            fig = plt.figure(figsize=(10,10))
+            sns_plot = sns.scatterplot(x="tsne-one", y="tsne-two", hue="Domain", style="Background", palette="deep", data=df_tsne)
+            fig = sns_plot.get_figure()
+            fig.savefig(f"tSNE_vis_perplex_{perplexity}.jpg")
+            tsne_img = cv2.imread(f"tSNE_vis_perplex_{perplexity}.jpg")
+            tSNE_image = wandb.Image(PIL.Image.fromarray(tsne_img))
+
+            wandb.log({f"tSNE visualization perplex {perplexity}": tSNE_image})
+
+    def _get_contr_feat_embeds(self, feature_embedding_val_src, feature_embedding_val_src_in_trgt, feature_embedding_val_trgt=None):
+
+            if feature_embedding_val_trgt is not None:
+
+                concat_feats = torch.concat([feature_embedding_val_src, feature_embedding_val_src_in_trgt, feature_embedding_val_trgt], dim=0)
+                concat_contrastive_embedding = self.contr_head(concat_feats)
+
+                length_concat_contrastive_embedding = concat_contrastive_embedding.size(0)
+                a_end_id = int(length_concat_contrastive_embedding/3)
+                b_end_id = int(length_concat_contrastive_embedding/3 * 2)
+                c_end_id = int(length_concat_contrastive_embedding/3 * 3)
+                contr_feature_embedding_val_src = concat_contrastive_embedding[:a_end_id]
+                contr_feature_embedding_val_src_in_trgt = concat_contrastive_embedding[a_end_id:b_end_id]
+                contr_feature_embedding_val_trgt = concat_contrastive_embedding[b_end_id:c_end_id]
+
+                return contr_feature_embedding_val_src, contr_feature_embedding_val_src_in_trgt, contr_feature_embedding_val_trgt
+            else:
+
+                concat_feats = torch.concat([feature_embedding_val_src, feature_embedding_val_src_in_trgt], dim=0)
+                concat_contrastive_embedding = self.contr_head(concat_feats)
+
+                length_concat_contrastive_embedding = concat_contrastive_embedding.size(0)
+                a_end_id = int(length_concat_contrastive_embedding/2)
+                b_end_id = int(length_concat_contrastive_embedding/2 * 2)
+                contr_feature_embedding_val_src = concat_contrastive_embedding[:a_end_id]
+                contr_feature_embedding_val_src_in_trgt = concat_contrastive_embedding[a_end_id:b_end_id]
+
+                return contr_feature_embedding_val_src, contr_feature_embedding_val_src_in_trgt
+
+
+    def _clean_up_tsne(self, df_tsne, with_target_data=False):
+
+            if with_target_data:
+
+                df_tsne.loc[((df_tsne['label'] == 0) | (df_tsne['label'] == 1), 'Domain')] = "Source"
+                df_tsne.loc[((df_tsne['label'] == 2) | (df_tsne['label'] == 3), 'Domain')] = "Source To Target"
+                df_tsne.loc[((df_tsne['label'] == 4) | (df_tsne['label'] == 5), 'Domain')] = "Target"
+                df_tsne["Background"] = np.where((df_tsne['label'] == 0) | (df_tsne['label'] == 2) | (df_tsne['label'] == 4) , "Background", "Polyp")
+
+                df_new = df_tsne
+                print(df_new['label'].value_counts())
+                df_back = df_new.loc[(df_new['label'] == 0) | (df_new['label'] == 2) | (df_new['label'] == 4)]
+
+                np.random.seed(10)
+                
+                num_polyps = len(df_new.loc[(df_new['label'] == 1)].index) + len(df_new.loc[(df_new['label'] == 1)].index) + len(df_new.loc[(df_new['label'] == 5)].index)
+                num_backs = len(df_new.loc[(df_new['label'] == 0)].index) + len(df_new.loc[(df_new['label'] == 0)].index) + len(df_new.loc[(df_new['label'] == 4)].index)
+                remove_n = num_backs - num_polyps - 500
+
+                drop_indices_back = np.random.choice(df_back.index, remove_n, replace=False)
+                df_minimized_backs = df_new.drop(drop_indices_back)
+
+                ### Minimize amount of polyp sourceToTarget
+                num_src_to_trgt_to_cut = int(len(df_new.loc[(df_new['label'] == 3)]) * 0.66)
+                drop_indices_src_to_trgt_polyp = np.random.choice(df_new.loc[(df_new['label'] == 3)].index, num_src_to_trgt_to_cut, replace=False)
+                df_minimized_backs = df_minimized_backs.drop(drop_indices_src_to_trgt_polyp)
+                ###
+
+                print(df_minimized_backs['label'].value_counts())
+
+                return df_minimized_backs
+
+            else:
+
+                df_tsne.loc[((df_tsne['label'] == 0) | (df_tsne['label'] == 1), 'Domain')] = "Source"
+                df_tsne.loc[((df_tsne['label'] == 2) | (df_tsne['label'] == 3), 'Domain')] = "Source To Target"
+                df_tsne["Background"] = np.where((df_tsne['label'] == 0) | (df_tsne['label'] == 2) , "Background", "Polyp")
+
+                df_tsne['label'] = df_tsne['label'].replace(0,'src - back')
+                df_tsne['label'] = df_tsne['label'].replace(1,'src - polyp')
+                df_tsne['label'] = df_tsne['label'].replace(2,'src to trgt - back')
+                df_tsne['label'] = df_tsne['label'].replace(3,'src to trgt - polyp')
+                
+                df_new = df_tsne
+                print(df_new['label'].value_counts())
+                df_back = df_new.loc[(df_new['label'] == "src - back") | (df_new['label'] == "src to trgt - back")]
+
+                np.random.seed(10)
+                
+                num_polyps = len(df_new.loc[(df_new['label'] == "src - polyp")].index) + len(df_new.loc[(df_new['label'] == "src - polyp")].index)
+                num_backs = len(df_new.loc[(df_new['label'] == "src - back")].index) + len(df_new.loc[(df_new['label'] == "src - back")].index)
+                remove_n = num_backs - num_polyps - 500
+
+                drop_indices_back = np.random.choice(df_back.index, remove_n, replace=False)
+                df_minimized_backs = df_new.drop(drop_indices_back)
+
+                ### Minimize amount of polyp sourceToTarget
+                num_src_to_trgt_to_cut = int(len(df_new.loc[(df_new['label'] == "src to trgt - polyp")]) * 0.66)
+                drop_indices_src_to_trgt_polyp = np.random.choice(df_new.loc[(df_new['label'] == "src to trgt - polyp")].index, num_src_to_trgt_to_cut, replace=False)
+                df_minimized_backs = df_minimized_backs.drop(drop_indices_src_to_trgt_polyp)
+                ###
+
+
+                print(df_minimized_backs['label'].value_counts())
+
+                return df_minimized_backs
 
 
     def _visualize_plots(self, mask_val, segmentation_mask_prediction_val, img_val):
