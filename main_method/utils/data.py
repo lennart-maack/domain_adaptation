@@ -167,10 +167,10 @@ class DataModuleSegmentation(pl.LightningDataModule):
             
             if self.use_cycle_gan_source:
                 loader_source_cycle_gan = data.DataLoader(self.train_data_source_cycle_gan, batch_size=self.batch_size, shuffle=True, num_workers=self.num_workers, drop_last=True)
+                loaders = CombinedLoader({"loader_source": loader_source, "loader_target": loader_target, "batch_cycle_gan_source": loader_source_cycle_gan}, mode="max_size_cycle")
             else:
-                loader_source_cycle_gan = None
+                loaders = CombinedLoader({"loader_source": loader_source, "loader_target": loader_target}, mode="max_size_cycle")
 
-            loaders = CombinedLoader({"loader_source": loader_source, "loader_target": loader_target, "batch_cycle_gan_source": loader_source_cycle_gan}, mode="max_size_cycle")
             return loaders
         
         else:
@@ -186,14 +186,15 @@ class DataModuleSegmentation(pl.LightningDataModule):
             loader_target_test = data.DataLoader(self.test_data, batch_size=self.batch_size, num_workers=self.num_workers, drop_last=True)
 
             if self.domain_adaptation:
+                
+                loader_target_val = data.DataLoader(self.train_data_target, batch_size=self.batch_size, num_workers=self.num_workers, drop_last=True)
 
                 if self.use_cycle_gan_source:
                     loader_source_cycle_gan = data.DataLoader(self.train_data_source_cycle_gan, batch_size=self.batch_size, shuffle=True, num_workers=self.num_workers, drop_last=True)
-                else:
-                    loader_source_cycle_gan = None
+                    loaders = CombinedLoader({"loader_val_source": loader_source, "loader_target_val": loader_target_val, "loader_target_test": loader_target_test, "batch_cycle_gan_source_val": loader_source_cycle_gan}, mode="max_size_cycle")
 
-                loader_target_val = data.DataLoader(self.train_data_target, batch_size=self.batch_size, num_workers=self.num_workers, drop_last=True)
-                loaders = CombinedLoader({"loader_val_source": loader_source, "loader_target_val": loader_target_val, "loader_target_test": loader_target_test, "batch_cycle_gan_source_val": loader_source_cycle_gan}, mode="max_size_cycle")
+                else:
+                    loaders = CombinedLoader({"loader_val_source": loader_source, "loader_target_val": loader_target_val, "loader_target_test": loader_target_test}, mode="max_size_cycle")
 
             else:
                 loaders = CombinedLoader({"loader_val_source": loader_source, "loader_target_test": loader_target_test}, mode="max_size_cycle")
