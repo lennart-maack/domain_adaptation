@@ -406,11 +406,18 @@ class PreTrain(pl.LightningModule):
     def validation_step(self, batch, batch_idx):
 
         # Validation is only conducted every few epoch to have faster training!
-        if batch_idx == 0 and self.current_epoch % 35 == 0:
+        if batch_idx == 0:
         
             batch_val = batch["loader_val_source"]
             img_val_src, mask_val_src = batch_val # mask.size(): [bs, 256, 256]
             
+            input_image_val_0 = wandb.Image(F_vision.to_pil_image(img_val_src[0]))
+            input_image_val_1 = wandb.Image(F_vision.to_pil_image(img_val_src[1]))
+            wandb.log({
+                    f"input_image_val_source_0": input_image_val_0,
+                    f"input_image_val_source_1": input_image_val_1,
+                    })
+
             feature_embedding_val_src = self(img_val_src)
 
             batch_target_val = batch["loader_target_val"]
@@ -427,11 +434,12 @@ class PreTrain(pl.LightningModule):
                 img_src_in_trg = FDA_source_to_target(img_val_src, img_target, L=0.01)
                 feature_embedding_val_src_in_trgt = self(img_src_in_trg)
 
-                if batch_idx == 0:
-                    input_image_fda_val = wandb.Image(F_vision.to_pil_image(img_src_in_trg[0]))
-                    wandb.log({
-                            f"input_image_fda_val": input_image_fda_val,
-                            })
+                input_image_fda_val_0 = wandb.Image(F_vision.to_pil_image(img_src_in_trg[0]))
+                input_image_fda_val_1 = wandb.Image(F_vision.to_pil_image(img_src_in_trg[1]))
+                wandb.log({
+                        f"input_image_fda_val_0": input_image_fda_val_0,
+                        f"input_image_fda_val_1": input_image_fda_val_1,
+                        })
 
             elif self.use_cycle_gan_source:
                 batch_cycle_gan_source_val = batch["batch_cycle_gan_source_val"]
