@@ -216,9 +216,10 @@ class DataModuleSegmentation(pl.LightningDataModule):
             loader_target_val = data.DataLoader(self.train_data_target, shuffle=True, batch_size=self.batch_size, num_workers=self.num_workers)
             if self.use_cycle_gan_source:
                     loader_source_cycle_gan = data.DataLoader(self.train_data_source_cycle_gan, batch_size=self.batch_size, shuffle=True, num_workers=self.num_workers, drop_last=True)
+                    loaders = CombinedLoader({"loader_val_source": loader_source, "loader_target_val": loader_target_val, "batch_cycle_gan_source_val": loader_source_cycle_gan}, mode="max_size_cycle")
             else:
-                loader_source_cycle_gan = None
-            loaders = CombinedLoader({"loader_val_source": loader_source, "loader_target_val": loader_target_val, "batch_cycle_gan_source_val": loader_source_cycle_gan}, mode="max_size_cycle")
+                loaders = CombinedLoader({"loader_val_source": loader_source, "loader_target_val": loader_target_val}, mode="max_size_cycle")
+            
             return loaders
 
         else:
