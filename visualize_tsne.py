@@ -19,6 +19,7 @@ from datetime import date
 def main():
 
     dm_vis_tsne = DataModuleSegmentation(path_to_train_source=wandb.config.path_to_train, path_to_train_target=wandb.config.path_to_train_target, domain_adaptation=wandb.config.domain_adaptation,
+                                use_cycle_gan_source=wandb.config.use_cycle_gan_source,
                                 load_data_for_tsne=True,
                                 path_to_test=wandb.config.test_data_path, load_size=256,
                                 batch_size=wandb.config.batch_size, num_workers=wandb.config.num_workers)

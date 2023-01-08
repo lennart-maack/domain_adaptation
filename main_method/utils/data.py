@@ -74,7 +74,7 @@ def split_data_into_train_val(path_to_train_source, split_ratio):
 
 
 class DataModuleSegmentation(pl.LightningDataModule):
-    def __init__(self, path_to_train_source=None, path_to_train_target=None, use_pseudo_labels=False, path_to_test=None, path_to_predict=None, load_data_for_tsne=False, coarse_segmentation=None, domain_adaptation=False, pseudo_labels=False, batch_size=16, load_size: int = 256, num_workers=2):
+    def __init__(self, path_to_train_source=None, path_to_train_target=None, use_pseudo_labels=False, path_to_test=None, path_to_predict=None, use_cycle_gan_source=False, load_data_for_tsne=False, coarse_segmentation=None, domain_adaptation=False, pseudo_labels=False, batch_size=16, load_size: int = 256, num_workers=2):
         """
         Args:
             path_to_train_source (string): Path to the folder containing the folder to training images and corresponding training masks - source
@@ -103,6 +103,8 @@ class DataModuleSegmentation(pl.LightningDataModule):
         self.batch_size = batch_size
 
         self.use_pseudo_labels = use_pseudo_labels
+
+        self.use_cycle_gan_source = use_cycle_gan_source
 
         self.load_data_for_tsne = load_data_for_tsne
 
@@ -139,6 +141,14 @@ class DataModuleSegmentation(pl.LightningDataModule):
             self.train_data_target = CustomDataset(image_list=image_list_train_target, mask_list=mask_list_train_target, path=self.path_to_train_target, 
                                                    use_pseudo_labels=self.use_pseudo_labels, transfo_for_train=True, load_size=self.load_size)
         
+            if self.use_cycle_gan_source:
+                self.train_data_source_cycle_gan = CustomDataset(image_list=image_list_train_source, mask_list=mask_list_train_source, path=self.path_to_train_source,
+                                                                use_cycle_gan_source=True,
+                                                                use_pseudo_labels=self.use_pseudo_labels, transfo_for_train=True, load_size=self.load_size)
+                self.val_data_source_cycle_gan = CustomDataset(image_list=image_list_val_source, mask_list=mask_list_val_source, path=self.path_to_train_source,
+                                                                use_cycle_gan_source=True,
+                                                                transfo_for_train=False, load_size=self.load_size, coarse_segmentation=self.coarse_segmentation)
+
         # Need of only one dataset when NOT using domain_adaptation model (e.g. U-Net) - it is called train_data_source
         else:
             self.train_data_source = CustomDataset(image_list=image_list_train_source, mask_list=mask_list_train_source, path=self.path_to_train_source,
@@ -154,8 +164,13 @@ class DataModuleSegmentation(pl.LightningDataModule):
         if self.domain_adaptation:
             loader_source = data.DataLoader(self.train_data_source, batch_size=self.batch_size, shuffle=True, num_workers=self.num_workers, drop_last=True) # drop_last=True is needed to calculate the FFT for FDA properly
             loader_target = data.DataLoader(self.train_data_target, batch_size=self.batch_size, shuffle=True, num_workers=self.num_workers, drop_last=True) # drop_last=True is needed to calculate the FFT for FDA properly
+            
+            if self.use_cycle_gan_source:
+                loader_source_cycle_gan = data.DataLoader(self.train_data_source_cycle_gan, batch_size=self.batch_size, shuffle=True, num_workers=self.num_workers, drop_last=True)
+            else:
+                loader_source_cycle_gan = None
 
-            loaders = CombinedLoader({"loader_source": loader_source, "loader_target": loader_target}, mode="max_size_cycle")
+            loaders = CombinedLoader({"loader_source": loader_source, "loader_target": loader_target, "batch_cycle_gan_source": loader_source_cycle_gan}, mode="max_size_cycle")
             return loaders
         
         else:
@@ -172,8 +187,13 @@ class DataModuleSegmentation(pl.LightningDataModule):
 
             if self.domain_adaptation:
 
+                if self.use_cycle_gan_source:
+                    loader_source_cycle_gan = data.DataLoader(self.train_data_source_cycle_gan, batch_size=self.batch_size, shuffle=True, num_workers=self.num_workers, drop_last=True)
+                else:
+                    loader_source_cycle_gan = None
+
                 loader_target_val = data.DataLoader(self.train_data_target, batch_size=self.batch_size, num_workers=self.num_workers, drop_last=True)
-                loaders = CombinedLoader({"loader_val_source": loader_source, "loader_target_val": loader_target_val, "loader_target_test": loader_target_test}, mode="max_size_cycle")
+                loaders = CombinedLoader({"loader_val_source": loader_source, "loader_target_val": loader_target_val, "loader_target_test": loader_target_test, "batch_cycle_gan_source_val": loader_source_cycle_gan}, mode="max_size_cycle")
 
             else:
                 loaders = CombinedLoader({"loader_val_source": loader_source, "loader_target_test": loader_target_test}, mode="max_size_cycle")
@@ -194,7 +214,11 @@ class DataModuleSegmentation(pl.LightningDataModule):
         if self.load_data_for_tsne:
             loader_source = data.DataLoader(self.val_data_source, shuffle=True, batch_size=self.batch_size, num_workers=self.num_workers)
             loader_target_val = data.DataLoader(self.train_data_target, shuffle=True, batch_size=self.batch_size, num_workers=self.num_workers)
-            loaders = CombinedLoader({"loader_val_source": loader_source, "loader_target_val": loader_target_val}, mode="max_size_cycle")
+            if self.use_cycle_gan_source:
+                    loader_source_cycle_gan = data.DataLoader(self.train_data_source_cycle_gan, batch_size=self.batch_size, shuffle=True, num_workers=self.num_workers, drop_last=True)
+            else:
+                loader_source_cycle_gan = None
+            loaders = CombinedLoader({"loader_val_source": loader_source, "loader_target_val": loader_target_val, "batch_cycle_gan_source_val": loader_source_cycle_gan}, mode="max_size_cycle")
             return loaders
 
         else:
@@ -204,7 +228,7 @@ class DataModuleSegmentation(pl.LightningDataModule):
 
 
 class CustomDataset(torch.utils.data.Dataset):
-    def __init__(self, image_list, mask_list, path, transfo_for_train, use_pseudo_labels=False, load_size = 256, coarse_segmentation=None):
+    def __init__(self, image_list, mask_list, path, transfo_for_train, use_cycle_gan_source=False, use_pseudo_labels=False, load_size = 256, coarse_segmentation=None):
         """
         Args:
             path (string): Path to the folder containing the folder to training images and corresponding training masks
@@ -222,8 +246,13 @@ class CustomDataset(torch.utils.data.Dataset):
             self.image_postfix, self.mask_postfix, self.m_t_postfix  = self.get_image_and_mask_postfix(self.paths, use_pseudo_labels=True)
         else:
             print("Using NO pseudo labels")
-            self.paths = (os.path.join(os.path.normpath(path), "images"), os.path.join(os.path.normpath(path), "masks"))
-            self.image_postfix, self.mask_postfix = self.get_image_and_mask_postfix(self.paths)
+            if use_cycle_gan_source:
+                print("Using cycle_gan_imgs")
+                self.paths = (os.path.join(os.path.normpath(path), "cycle_gan"), os.path.join(os.path.normpath(path), "masks"))
+                self.image_postfix, self.mask_postfix = self.get_image_and_mask_postfix(self.paths)
+            else:
+                self.paths = (os.path.join(os.path.normpath(path), "images"), os.path.join(os.path.normpath(path), "masks"))
+                self.image_postfix, self.mask_postfix = self.get_image_and_mask_postfix(self.paths)
 
         self.use_pseudo_labels = use_pseudo_labels
         

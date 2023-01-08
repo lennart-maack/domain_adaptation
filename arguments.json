@@ -5,16 +5,17 @@
     "checkpoint_dir": "das",
     
 
-    "path_to_train": "C:/Users/Lenna/Google Drive Streaming/My Drive/Master_Thesis/datasets/PolypDatasets/CVC-EndoScene",
-    "path_to_train_target": "C:/Users/Lenna/Google Drive Streaming/My Drive/Master_Thesis/datasets/PolypDatasets/ETIS-LaribPolypDB",
+    "path_to_train": "/home/Maack/master_thesis/datasets/content/drive/MyDrive/Master_Thesis/datasets/PolypDatasets/CVC-EndoScene",
+    "path_to_train_target": "/home/Maack/master_thesis/datasets/content/drive/MyDrive/Master_Thesis/datasets/PolypDatasets/ETIS-LaribPolypDB",
     "use_pseudo_labels": true,
     "use_confidence_threshold_m_t": true,
     "use_contr_head_for_tsne": true,
     "visualize_tsne": false,
     "auto_lr_find": false,
 
+
     "domain_adaptation": true,
-    "test_data_path": "C:/Users/Lenna/Google Drive Streaming/My Drive/Master_Thesis/datasets/PolypDatasets/ETIS-LaribPolypDB",
+    "test_data_path": "/home/Maack/master_thesis/datasets/content/drive/MyDrive/Master_Thesis/datasets/PolypDatasets/ETIS-LaribPolypDB",
     "load_size": 256 ,
     "batch_size": 8,
     "num_workers": 2,
@@ -23,6 +24,7 @@
     "pretrained_ImageNet": false,
     "contr_head_type": "contr_head_1",
     "apply_FDA": true,
+    "use_cycle_gan_source": false,
     "use_self_learning": true,
     "ssl_threshold": 0.9,
     "use_target_for_contr": false,
@@ -30,7 +32,7 @@
     "max_samples": 4096,
     "max_views": 50,
     "max_epochs": 2,
-    "device": "cpu",
+    "device": "cuda",
     "debug": false,
     "overfit_batches": 0.0
 }

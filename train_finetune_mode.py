@@ -19,6 +19,7 @@ def main():
 
     dm = DataModuleSegmentation(path_to_train_source=wandb.config.path_to_train, path_to_train_target=wandb.config.path_to_train_target, domain_adaptation=wandb.config.domain_adaptation,
                                 use_pseudo_labels=wandb.config.use_pseudo_labels,
+                                use_cycle_gan_source=wandb.config.use_cycle_gan_source,
                                 path_to_test=wandb.config.test_data_path, load_size=256,
                                 batch_size=wandb.config.batch_size, num_workers=wandb.config.num_workers)
 
@@ -113,6 +114,7 @@ if __name__ == "__main__":
     parser.add_argument("--use_confidence_threshold_m_t", type=bool, default=False, help="Set to true if you want to use m_t threshold maps for only using high confidence pixel embeddings for train_target(valid) images - a subfolder to the train_target data with name m_t needs to excist")
     parser.add_argument("--check_val_every_n_epoch", type=int, default=2, help="After how many epochs do you want to evaluate")
     parser.add_argument("--auto_lr_find", type=bool, default=False, help="Helps to find the best lr for your model")
+    parser.add_argument("--use_cycle_gan_source", type=bool, default=False, help="If set to true, source imgs in the target style - style adapted by cycle GAN are used for training")
 
 
     parser.add_argument("--pretrained_ImageNet", type=bool, default=True, help="If a pretrained ResNet on IMAGENET is used")

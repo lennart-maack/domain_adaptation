@@ -282,7 +282,7 @@ class PreTrain(pl.LightningModule):
 
         self.use_pseudo_labels = wandb_configs.use_pseudo_labels
         self.use_confidence_threshold_m_t = wandb_configs.use_confidence_threshold_m_t
-
+        self.use_cycle_gan_source = wandb_configs.use_cycle_gan_source
 
     def forward(self, input_data):
 
@@ -331,13 +331,23 @@ class PreTrain(pl.LightningModule):
         layer4_output_src = self(img_source)
 
         # 2. Calculate FDA transformed source img, get FDA entropy loss, get pixel embedding from encoder for FDA translated source img
-        if self.apply_FDA:
+        if self.apply_FDA and not self.use_cycle_gan_source:
 
             src_in_trg = FDA_source_to_target(img_source, img_target, L=0.01)
             loss_ent = self._calculate_FDA_loss_ent(img_target)
             self.log("Training Entropy Loss (Charbonnier)", loss_ent, prog_bar=True)
 
             layer4_output_src_in_trgt = self(src_in_trg)
+
+        elif self.use_cycle_gan_source and not self.apply_FDA:
+            loss_ent = 0
+            batch_cycle_gan_source = batch["batch_cycle_gan_source"]
+            img_cycle_gan_source, _ = batch_cycle_gan_source
+            layer4_output_cycle_gan_source = self(img_cycle_gan_source)
+
+        elif self.use_cycle_gan_source and self.apply_FDA:
+
+            raise AssertionError("Can not use both cycle_gan_source adapted images and FDA at the same time")
 
         # 2. Get pixel embedding from encoder for target img
         if self.use_pseudo_labels:
@@ -367,7 +377,11 @@ class PreTrain(pl.LightningModule):
                                                                         layer4_output_src_in_trgt=layer4_output_src_in_trgt)
                     self.log("Training Contrastive Loss", contrastive_loss, prog_bar=True)
             
-            # Feature embeddings of source are to be used
+            elif self.use_cycle_gan_source:
+                # Feature embeddings of source and sourceToTarget are to be used
+                    contrastive_loss = self._get_contr_loss_pretraining(layer4_output_src=layer4_output_src, mask_source=mask_source, 
+                                                                        layer4_output_src_in_trgt=layer4_output_cycle_gan_source)
+                    self.log("Training Contrastive Loss", contrastive_loss, prog_bar=True)
             else:
                 
                 if self.use_pseudo_labels:
@@ -413,9 +427,30 @@ class PreTrain(pl.LightningModule):
                 img_src_in_trg = FDA_source_to_target(img_val_src, img_target, L=0.01)
                 feature_embedding_val_src_in_trgt = self(img_src_in_trg)
 
+                if batch_idx == 0:
+                    input_image_fda_val = wandb.Image(F_vision.to_pil_image(img_src_in_trg[0]))
+                    wandb.log({
+                            f"input_image_fda_val": input_image_fda_val,
+                            })
+
+            elif self.use_cycle_gan_source:
+                batch_cycle_gan_source_val = batch["batch_cycle_gan_source_val"]
+                img_cycle_gan_source_val, _ = batch_cycle_gan_source_val
+
+                if batch_idx == 0:
+                    input_image_gan_source_val = wandb.Image(F_vision.to_pil_image(img_cycle_gan_source_val[0]))
+                    wandb.log({
+                            f"input_image_gan_source_val": input_image_gan_source_val,
+                            })
+                feature_embedding_cycle_gan_source_val = self(img_cycle_gan_source_val)
+
             if self.visualize_tsne:
-                self._visualize_tsne(feature_embedding_val_src, feature_embedding_val_src_in_trgt, mask_val_src, 
-                                    feature_embedding_val_trgt, pseudo_label_target=pseudo_label_target)
+                if self.apply_FDA:
+                    self._visualize_tsne(feature_embedding_val_src, feature_embedding_val_src_in_trgt, mask_val_src, 
+                                        feature_embedding_val_trgt, pseudo_label_target=pseudo_label_target)
+                elif self.use_cycle_gan_source:
+                    self._visualize_tsne(feature_embedding_val_src, feature_embedding_cycle_gan_source_val, mask_val_src, 
+                                        feature_embedding_val_trgt, pseudo_label_target=pseudo_label_target)
 
         return
 
@@ -440,9 +475,19 @@ class PreTrain(pl.LightningModule):
                 feature_embedding_val_trgt=None
                 img_target, _ = batch_target_val
 
-            if self.apply_FDA:
+            if self.apply_FDA and not self.use_cycle_gan_source:
                 img_src_in_trg = FDA_source_to_target(img_val_src, img_target, L=0.01)
                 feature_embedding_val_src_in_trgt = self(img_src_in_trg)
+
+            elif self.use_cycle_gan_source and not self.apply_FDA:
+
+                batch_source_to_target_cycle = batch["batch_cycle_gan_source_val"]
+                img_val_src_in_trgt_cycle, _ = batch_source_to_target_cycle
+                feature_embedding_val_src_in_trgt = self(img_val_src_in_trgt_cycle)
+
+            elif self.use_cycle_gan_source and self.apply_FDA:
+                raise AssertionError("Can not use both cycle_gan_source adapted images and FDA at the same time")
+
 
             self._visualize_tsne(feature_embedding_val_src, feature_embedding_val_src_in_trgt, mask_val_src, 
                                 feature_embedding_val_trgt, pseudo_label_target=pseudo_label_target, perplexity=50)
@@ -557,7 +602,7 @@ class PreTrain(pl.LightningModule):
 
 
         fig = plt.figure(figsize=(10,10))
-        sns_plot = sns.scatterplot(x="tsne-one", y="tsne-two", hue="label", palette="deep", data=df_tsne)
+        sns_plot = sns.scatterplot(x="tsne-one", y="tsne-two", hue="Domain", style="Background", palette="deep", data=df_tsne)
         fig = sns_plot.get_figure()
         fig.savefig(f"tSNE_vis_perplex_{perplexity}.jpg")
         tsne_img = cv2.imread(f"tSNE_vis_perplex_{perplexity}.jpg")
@@ -597,21 +642,21 @@ class PreTrain(pl.LightningModule):
     def _clean_up_tsne(self, df_tsne, with_target_data=False):
 
         if with_target_data:
-            df_tsne['label'] = df_tsne['label'].replace(0,'src - back')
-            df_tsne['label'] = df_tsne['label'].replace(1,'src - polyp')
-            df_tsne['label'] = df_tsne['label'].replace(2,'src to trgt - back')
-            df_tsne['label'] = df_tsne['label'].replace(3,'src to trgt - polyp')
-            df_tsne['label'] = df_tsne['label'].replace(4,'trgt - back')
-            df_tsne['label'] = df_tsne['label'].replace(5,'trgt - polyp')
+
+            df_tsne.loc[((df_tsne['label'] == 0) | (df_tsne['label'] == 1), 'Domain')] = "Source"
+            df_tsne.loc[((df_tsne['label'] == 2) | (df_tsne['label'] == 3), 'Domain')] = "Source To Target"
+            df_tsne.loc[((df_tsne['label'] == 4) | (df_tsne['label'] == 5), 'Domain')] = "Target"
+            df_tsne["Background"] = np.where((df_tsne['label'] == 0) | (df_tsne['label'] == 2) | (df_tsne['label'] == 4) , "Background", "Polyp")
+
             feat_cols = [ 'feature'+str(i) for i in range(len(df_tsne.columns)-3)]
             df_new = df_tsne.drop(feat_cols, axis="columns")
             print(df_new['label'].value_counts())
-            df_back = df_new.loc[(df_new['label'] == "src - back") | (df_new['label'] == "src to trgt - back") | (df_new['label'] == "trgt - back")]
+            df_back = df_new.loc[(df_new['label'] == 0) | (df_new['label'] == 2) | (df_new['label'] == 4)]
 
             np.random.seed(10)
             
-            num_polyps = len(df_new.loc[(df_new['label'] == "src - polyp")].index) + len(df_new.loc[(df_new['label'] == "src - polyp")].index) + len(df_new.loc[(df_new['label'] == "trgt - polyp")].index)
-            num_backs = len(df_new.loc[(df_new['label'] == "src - back")].index) + len(df_new.loc[(df_new['label'] == "src - back")].index) + len(df_new.loc[(df_new['label'] == "trgt - back")].index)
+            num_polyps = len(df_new.loc[(df_new['label'] == 1)].index) + len(df_new.loc[(df_new['label'] == 1)].index) + len(df_new.loc[(df_new['label'] == 5)].index)
+            num_backs = len(df_new.loc[(df_new['label'] == 0)].index) + len(df_new.loc[(df_new['label'] == 0)].index) + len(df_new.loc[(df_new['label'] == 4)].index)
             remove_n = num_backs - num_polyps - 500
 
             drop_indices_back = np.random.choice(df_back.index, remove_n, replace=False)
@@ -622,6 +667,11 @@ class PreTrain(pl.LightningModule):
             return df_minimized_backs
 
         else:
+
+            df_tsne.loc[((df_tsne['label'] == 0) | (df_tsne['label'] == 1), 'Domain')] = "Source"
+            df_tsne.loc[((df_tsne['label'] == 2) | (df_tsne['label'] == 3), 'Domain')] = "Source To Target"
+            df_tsne["Background"] = np.where((df_tsne['label'] == 0) | (df_tsne['label'] == 2) , "Background", "Polyp")
+
             df_tsne['label'] = df_tsne['label'].replace(0,'src - back')
             df_tsne['label'] = df_tsne['label'].replace(1,'src - polyp')
             df_tsne['label'] = df_tsne['label'].replace(2,'src to trgt - back')
@@ -643,6 +693,8 @@ class PreTrain(pl.LightningModule):
             print(df_minimized_backs['label'].value_counts())
 
             return df_minimized_backs
+
+
 
 class FineTune(pl.LightningModule):
     def __init__(
@@ -710,7 +762,7 @@ class FineTune(pl.LightningModule):
         self.index_range = list(range(wandb_configs.index_range[0],wandb_configs.index_range[1]+1))
 
         self.use_pseudo_labels = wandb_configs.use_pseudo_labels
-
+        self.use_cycle_gan_source = wandb_configs.use_cycle_gan_source
 
     def forward(self, input_data):
 
@@ -772,7 +824,7 @@ class FineTune(pl.LightningModule):
             loss_ce_trgt = 0
 
         # 2. Calculate FDA transformed source img and FDA entropy loss and CE loss - target img with pseudo labels
-        if self.apply_FDA:
+        if self.apply_FDA and not self.use_cycle_gan_source:
 
             src_in_trg = FDA_source_to_target(img_source, img_target, L=0.01)
             
@@ -782,6 +834,19 @@ class FineTune(pl.LightningModule):
             segmentation_mask_prediction_src_in_trgt, layer4_output_src_in_trgt = self(src_in_trg)
             loss_ce_src_in_trgt = self.cross_entropy_loss(segmentation_mask_prediction_src_in_trgt, mask_source)
             self.log("Training Loss - Source in Target (Cross Entropy)", loss_ce_src_in_trgt, prog_bar=True)
+        
+        elif self.use_cycle_gan_source and not self.apply_FDA:
+            loss_ent = 0
+            batch_cycle_gan_source = batch["batch_cycle_gan_source"]
+            img_cycle_gan_source, _ = batch_cycle_gan_source
+            segmentation_mask_prediction_src_in_trgt, layer4_output_src_in_trgt = self(img_cycle_gan_source)
+            loss_ce_src_in_trgt = self.cross_entropy_loss(segmentation_mask_prediction_src_in_trgt, mask_source)
+            self.log("Training Loss - Source in Target with CycleGAN (Cross Entropy)", loss_ce_src_in_trgt, prog_bar=True)
+
+        elif self.use_cycle_gan_source and self.apply_FDA:
+
+            raise AssertionError("Can not use both cycle_gan_source adapted images and FDA at the same time")
+
         else:
             loss_ent = 0
             loss_ce_src_in_trgt = 0
@@ -819,10 +884,20 @@ class FineTune(pl.LightningModule):
             pseudo_label_target = None
             img_target, _ = batch_target_val
         
-        if self.apply_FDA:
+        if self.apply_FDA and not self.use_cycle_gan_source:
             # 2a. Create pixel_embeddings for src_to_trgt
             img_val_src_in_trg = FDA_source_to_target(img_val_src, img_target, L=0.01)
             _, feature_embedding_val_src_in_trgt = self(img_val_src_in_trg)
+        
+        if self.use_cycle_gan_source and not self.apply_FDA:
+            
+            batch_cycle_gan_source_val = batch["batch_cycle_gan_source_val"]
+            img_cycle_gan_source_val, _ = batch_cycle_gan_source_val
+            _, feature_embedding_val_src_in_trgt = self(img_cycle_gan_source_val)
+        
+        elif self.use_cycle_gan_source and self.apply_FDA:
+            raise AssertionError("Can not use both cycle_gan_source adapted images and FDA at the same time")
+
         else:
             feature_embedding_val_src_in_trgt = None
 
@@ -987,7 +1062,7 @@ class FineTune(pl.LightningModule):
 
 
         fig = plt.figure(figsize=(10,10))
-        sns_plot = sns.scatterplot(x="tsne-one", y="tsne-two", hue="label", palette="deep", data=df_tsne)
+        sns_plot = sns.scatterplot(x="tsne-one", y="tsne-two", hue="Domain", style="Background", palette="deep", data=df_tsne)
         fig = sns_plot.get_figure()
         fig.savefig(f"tSNE_vis_perplex_{perplexity}.jpg")
         tsne_img = cv2.imread(f"tSNE_vis_perplex_{perplexity}.jpg")
@@ -995,24 +1070,25 @@ class FineTune(pl.LightningModule):
 
         wandb.log({f"tSNE visualization perplex {perplexity}": tSNE_image})
 
+
     def _clean_up_tsne(self, df_tsne, with_target_data=False):
 
         if with_target_data:
-            df_tsne['label'] = df_tsne['label'].replace(0,'src - back')
-            df_tsne['label'] = df_tsne['label'].replace(1,'src - polyp')
-            df_tsne['label'] = df_tsne['label'].replace(2,'src to trgt - back')
-            df_tsne['label'] = df_tsne['label'].replace(3,'src to trgt - polyp')
-            df_tsne['label'] = df_tsne['label'].replace(4,'trgt - back')
-            df_tsne['label'] = df_tsne['label'].replace(5,'trgt - polyp')
+
+            df_tsne.loc[((df_tsne['label'] == 0) | (df_tsne['label'] == 1), 'Domain')] = "Source"
+            df_tsne.loc[((df_tsne['label'] == 2) | (df_tsne['label'] == 3), 'Domain')] = "Source To Target"
+            df_tsne.loc[((df_tsne['label'] == 4) | (df_tsne['label'] == 5), 'Domain')] = "Target"
+            df_tsne["Background"] = np.where((df_tsne['label'] == 0) | (df_tsne['label'] == 2) | (df_tsne['label'] == 4) , "Background", "Polyp")
+
             feat_cols = [ 'feature'+str(i) for i in range(len(df_tsne.columns)-3)]
             df_new = df_tsne.drop(feat_cols, axis="columns")
             print(df_new['label'].value_counts())
-            df_back = df_new.loc[(df_new['label'] == "src - back") | (df_new['label'] == "src to trgt - back") | (df_new['label'] == "trgt - back")]
+            df_back = df_new.loc[(df_new['label'] == 0) | (df_new['label'] == 2) | (df_new['label'] == 4)]
 
             np.random.seed(10)
             
-            num_polyps = len(df_new.loc[(df_new['label'] == "src - polyp")].index) + len(df_new.loc[(df_new['label'] == "src - polyp")].index) + len(df_new.loc[(df_new['label'] == "trgt - polyp")].index)
-            num_backs = len(df_new.loc[(df_new['label'] == "src - back")].index) + len(df_new.loc[(df_new['label'] == "src - back")].index) + len(df_new.loc[(df_new['label'] == "trgt - back")].index)
+            num_polyps = len(df_new.loc[(df_new['label'] == 1)].index) + len(df_new.loc[(df_new['label'] == 1)].index) + len(df_new.loc[(df_new['label'] == 5)].index)
+            num_backs = len(df_new.loc[(df_new['label'] == 0)].index) + len(df_new.loc[(df_new['label'] == 0)].index) + len(df_new.loc[(df_new['label'] == 4)].index)
             remove_n = num_backs - num_polyps - 500
 
             drop_indices_back = np.random.choice(df_back.index, remove_n, replace=False)
@@ -1023,6 +1099,11 @@ class FineTune(pl.LightningModule):
             return df_minimized_backs
 
         else:
+
+            df_tsne.loc[((df_tsne['label'] == 0) | (df_tsne['label'] == 1), 'Domain')] = "Source"
+            df_tsne.loc[((df_tsne['label'] == 2) | (df_tsne['label'] == 3), 'Domain')] = "Source To Target"
+            df_tsne["Background"] = np.where((df_tsne['label'] == 0) | (df_tsne['label'] == 2) , "Background", "Polyp")
+
             df_tsne['label'] = df_tsne['label'].replace(0,'src - back')
             df_tsne['label'] = df_tsne['label'].replace(1,'src - polyp')
             df_tsne['label'] = df_tsne['label'].replace(2,'src to trgt - back')
@@ -1037,7 +1118,7 @@ class FineTune(pl.LightningModule):
             num_polyps = len(df_new.loc[(df_new['label'] == "src - polyp")].index) + len(df_new.loc[(df_new['label'] == "src - polyp")].index)
             num_backs = len(df_new.loc[(df_new['label'] == "src - back")].index) + len(df_new.loc[(df_new['label'] == "src - back")].index)
             remove_n = num_backs - num_polyps - 500
-            
+
             drop_indices_back = np.random.choice(df_back.index, remove_n, replace=False)
             df_minimized_backs = df_new.drop(drop_indices_back)
 

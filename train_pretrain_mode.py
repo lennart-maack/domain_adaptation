@@ -18,10 +18,10 @@ def main():
 
     dm = DataModuleSegmentation(path_to_train_source=wandb.config.path_to_train, path_to_train_target=wandb.config.path_to_train_target,
                                 use_pseudo_labels=wandb.config.use_pseudo_labels,
+                                use_cycle_gan_source=wandb.config.use_cycle_gan_source,
                                 domain_adaptation=wandb.config.domain_adaptation,
                                 path_to_test=wandb.config.test_data_path, load_size=256,
                                 batch_size=wandb.config.batch_size, num_workers=wandb.config.num_workers)
-
 
     checkpoint_dir = os.path.join(wandb.config.checkpoint_dir, str(date.today()), "Pretrain", f"model_{wandb.config.model_type}_lr{wandb.config.lr}_pretr_INet{wandb.config.pretrained_ImageNet}_temp_{wandb.config.temperature}_pseudo_lab{wandb.config.use_pseudo_labels}")
     
@@ -70,7 +70,7 @@ if __name__ == "__main__":
     parser.add_argument('--load_json', default=None, help='Path to json file to load settings from file in json format. Command line options override values in file.')
 
     # Arguments for weights and biases and experiment tracking
-    parser.add_argument("--wandb_logging", type=bool, help="if set to false, wandb does not log")
+    parser.add_argument("--wandb_logging", default=True, type=bool, help="if set to false, wandb does not log")
     parser.add_argument("--run_name", type=str, help="Name of the run in wandb")
     parser.add_argument("--project_name", type=str, help="Name of the project in wandb")
     parser.add_argument("--checkpoint_dir", type=str, help="path where the checkpoint (model etc.) should be saved")
@@ -89,6 +89,7 @@ if __name__ == "__main__":
     parser.add_argument("--auto_lr_find", type=bool, default=False, help="Helps to find the best lr for your model")
 
 
+    parser.add_argument("--use_cycle_gan_source", type=bool, default=False, help="If set to true, source imgs in the target style - style adapted by cycle GAN are used for training")
     parser.add_argument("--domain_adaptation", action='store_true', help="If set, domain adaptation is used (a target dataset for training is loaded in data.py)")
     parser.add_argument("--test_data_path", default=None, type=str, help="path where the test target dataset is stored")
     parser.add_argument("--load_size", type=int, default=256, help="size to which images will get resized")
