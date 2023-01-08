@@ -648,8 +648,7 @@ class PreTrain(pl.LightningModule):
             df_tsne.loc[((df_tsne['label'] == 4) | (df_tsne['label'] == 5), 'Domain')] = "Target"
             df_tsne["Background"] = np.where((df_tsne['label'] == 0) | (df_tsne['label'] == 2) | (df_tsne['label'] == 4) , "Background", "Polyp")
 
-            feat_cols = [ 'feature'+str(i) for i in range(len(df_tsne.columns)-3)]
-            df_new = df_tsne.drop(feat_cols, axis="columns")
+            df_new = df_tsne
             print(df_new['label'].value_counts())
             df_back = df_new.loc[(df_new['label'] == 0) | (df_new['label'] == 2) | (df_new['label'] == 4)]
 
@@ -661,6 +660,12 @@ class PreTrain(pl.LightningModule):
 
             drop_indices_back = np.random.choice(df_back.index, remove_n, replace=False)
             df_minimized_backs = df_new.drop(drop_indices_back)
+
+            ### Minimize amount of polyp sourceToTarget
+            num_src_to_trgt_to_cut = len(df_new.loc[(df_new['label'] == 3)]) * 0.66
+            drop_indices_src_to_trgt_polyp = np.random.choice(df_new.loc[(df_new['label'] == 3)].index, num_src_to_trgt_to_cut, replace=False)
+            df_minimized_backs = df_minimized_backs.drop(drop_indices_src_to_trgt_polyp)
+            ###
 
             print(df_minimized_backs['label'].value_counts())
 
@@ -676,8 +681,8 @@ class PreTrain(pl.LightningModule):
             df_tsne['label'] = df_tsne['label'].replace(1,'src - polyp')
             df_tsne['label'] = df_tsne['label'].replace(2,'src to trgt - back')
             df_tsne['label'] = df_tsne['label'].replace(3,'src to trgt - polyp')
-            feat_cols = [ 'feature'+str(i) for i in range(len(df_tsne.columns)-3)]
-            df_new = df_tsne.drop(feat_cols, axis="columns")
+            
+            df_new = df_tsne
             print(df_new['label'].value_counts())
             df_back = df_new.loc[(df_new['label'] == "src - back") | (df_new['label'] == "src to trgt - back")]
 
@@ -689,6 +694,13 @@ class PreTrain(pl.LightningModule):
 
             drop_indices_back = np.random.choice(df_back.index, remove_n, replace=False)
             df_minimized_backs = df_new.drop(drop_indices_back)
+
+            ### Minimize amount of polyp sourceToTarget
+            num_src_to_trgt_to_cut = len(df_new.loc[(df_new['label'] == "src to trgt - polyp")]) * 0.66
+            drop_indices_src_to_trgt_polyp = np.random.choice(df_new.loc[(df_new['label'] == "src to trgt - polyp")].index, num_src_to_trgt_to_cut, replace=False)
+            df_minimized_backs = df_minimized_backs.drop(drop_indices_src_to_trgt_polyp)
+            ###
+
 
             print(df_minimized_backs['label'].value_counts())
 
@@ -1080,8 +1092,7 @@ class FineTune(pl.LightningModule):
             df_tsne.loc[((df_tsne['label'] == 4) | (df_tsne['label'] == 5), 'Domain')] = "Target"
             df_tsne["Background"] = np.where((df_tsne['label'] == 0) | (df_tsne['label'] == 2) | (df_tsne['label'] == 4) , "Background", "Polyp")
 
-            feat_cols = [ 'feature'+str(i) for i in range(len(df_tsne.columns)-3)]
-            df_new = df_tsne.drop(feat_cols, axis="columns")
+            df_new = df_tsne
             print(df_new['label'].value_counts())
             df_back = df_new.loc[(df_new['label'] == 0) | (df_new['label'] == 2) | (df_new['label'] == 4)]
 
@@ -1093,6 +1104,12 @@ class FineTune(pl.LightningModule):
 
             drop_indices_back = np.random.choice(df_back.index, remove_n, replace=False)
             df_minimized_backs = df_new.drop(drop_indices_back)
+
+            ### Minimize amount of polyp sourceToTarget
+            num_src_to_trgt_to_cut = len(df_new.loc[(df_new['label'] == 3)]) * 0.66
+            drop_indices_src_to_trgt_polyp = np.random.choice(df_new.loc[(df_new['label'] == 3)].index, num_src_to_trgt_to_cut, replace=False)
+            df_minimized_backs = df_minimized_backs.drop(drop_indices_src_to_trgt_polyp)
+            ###
 
             print(df_minimized_backs['label'].value_counts())
 
@@ -1108,8 +1125,8 @@ class FineTune(pl.LightningModule):
             df_tsne['label'] = df_tsne['label'].replace(1,'src - polyp')
             df_tsne['label'] = df_tsne['label'].replace(2,'src to trgt - back')
             df_tsne['label'] = df_tsne['label'].replace(3,'src to trgt - polyp')
-            feat_cols = [ 'feature'+str(i) for i in range(len(df_tsne.columns)-3)]
-            df_new = df_tsne.drop(feat_cols, axis="columns")
+            
+            df_new = df_tsne
             print(df_new['label'].value_counts())
             df_back = df_new.loc[(df_new['label'] == "src - back") | (df_new['label'] == "src to trgt - back")]
 
@@ -1122,9 +1139,17 @@ class FineTune(pl.LightningModule):
             drop_indices_back = np.random.choice(df_back.index, remove_n, replace=False)
             df_minimized_backs = df_new.drop(drop_indices_back)
 
+            ### Minimize amount of polyp sourceToTarget
+            num_src_to_trgt_to_cut = len(df_new.loc[(df_new['label'] == "src to trgt - polyp")]) * 0.66
+            drop_indices_src_to_trgt_polyp = np.random.choice(df_new.loc[(df_new['label'] == "src to trgt - polyp")].index, num_src_to_trgt_to_cut, replace=False)
+            df_minimized_backs = df_minimized_backs.drop(drop_indices_src_to_trgt_polyp)
+            ###
+
+
             print(df_minimized_backs['label'].value_counts())
 
             return df_minimized_backs
+
 
     def _get_contr_feat_embeds(self, feature_embedding_val_src, feature_embedding_val_src_in_trgt, feature_embedding_val_trgt=None):
 
