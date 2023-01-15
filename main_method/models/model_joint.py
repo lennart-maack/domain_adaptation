@@ -318,7 +318,8 @@ class MainNetwork(pl.LightningModule):
 
     def configure_optimizers(self):
         optimizer = torch.optim.Adam(self.parameters(), lr=self.learning_rate)
-        lr_scheduler = torch.optim.lr_scheduler.PolynomialLR(optimizer, total_iters=self.trainer.max_epochs, power=0.9)
+        # lr_scheduler = torch.optim.lr_scheduler.PolynomialLR(optimizer, total_iters=self.trainer.max_epochs, power=0.9)
+        lr_scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=self.trainer.max_epochs)
         
         return {"optimizer": optimizer, "lr_scheduler": { "scheduler": lr_scheduler, "interval": "epoch"} }
     
@@ -401,7 +402,7 @@ class MainNetwork(pl.LightningModule):
             
             if self.apply_FDA:
                 # Feature embeddings of source, sourceToTarget and target are to be used !!!!----> NEEDS TO BE FINISHED!!!!
-                if self.use_self_learning and self.use_target_for_contr:
+                if self.use_self_learning and self.use_target_for_contr and self.current_epoch >= self.start_epoch_for_self_learning:
 
                     contrastive_loss = self._get_contr_loss(layer4_output_src, segmentation_mask_prediction_src, mask_source, 
                                                         layer4_output_src_in_trgt, segmentation_mask_prediction_src_in_trgt,
@@ -456,14 +457,14 @@ class MainNetwork(pl.LightningModule):
             _, layer4_output_val_src_in_trgt = self(src_in_trg_val)
 
         # 3. Section for visualization
-        if batch_idx == 0 and self.current_epoch % 4 == 0:
+        if batch_idx == 0 and self.current_epoch % 40 == 0:
             
             if self.visualize_tsne:
                 self._visualize_tsne(feature_embedding_val_src=feature_embedding_val_src, 
                                     feature_embedding_val_src_in_trgt=layer4_output_val_src_in_trgt,
                                     mask_val_src=mask_val_src)
             
-            self._visualize_plots(mask_val_src, segmentation_mask_prediction_val, img_val_src)
+                self._visualize_plots(mask_val_src, segmentation_mask_prediction_val, img_val_src)
 
         return {"val_loss": val_loss}
 
