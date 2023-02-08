@@ -2,7 +2,6 @@
 helper.ipynb
 /cocosubset
 /wandb
-/basic_UNet/wandb
 
 /venv
 
@@ -17,3 +16,5 @@ helper.ipynb
 *.wandb
 
 other_SOTAs/basic_UNet/wandb
+
+other_SOTAs/CoFo//weights/*
