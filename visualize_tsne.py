@@ -8,6 +8,7 @@ from pytorch_lightning.loggers import WandbLogger
 from pytorch_lightning.callbacks import ModelCheckpoint, LearningRateMonitor
 
 from main_method.models.models_pretraining import PreTrain
+from main_method.models.model_joint import MainNetwork
 
 from main_method.utils.data import DataModuleSegmentation
 
@@ -15,28 +16,88 @@ import wandb
 
 from datetime import date
 
+from torchvision.utils import save_image
+
+
+# def main():
+
+    # dm_vis_tsne = DataModuleSegmentation(path_to_train_source=wandb.config.path_to_train, path_to_train_target=wandb.config.path_to_train_target, domain_adaptation=wandb.config.domain_adaptation,
+    #                             use_cycle_gan_source=wandb.config.use_cycle_gan_source,
+    #                             load_data_for_tsne=True,
+    #                             path_to_test=wandb.config.test_data_path, load_size=256,
+    #                             batch_size=wandb.config.batch_size, num_workers=wandb.config.num_workers)
+
+    # # Put in the path to visualize tsne - here!
+    # path_to_checkpoint_model = r"C:\Users\Lenna\Google Drive Streaming\My Drive\Master_Thesis\experiments\Models_to_create_qual_compare_in_results_chap\Baseline\epoch=129-step=4420.ckpt"
+    
+    
+    # checkpoint = torch.load(path_to_checkpoint_model, map_location=torch.device(wandb.config.device))
+
+    # # model = PreTrain(wandb.config)
+
+    # model = MainNetwork(wandb.config)
+
+    # model.load_state_dict(checkpoint["state_dict"])
+
+    # trainer = pl.Trainer(accelerator=wandb.config.device, devices=1, fast_dev_run=wandb.config.debug)
+
+    # trainer.predict(model, dataloaders=dm_vis_tsne)
+
+
+def create_pseudo_labels_from_list_of_predictions(list_of_predictions_dict, path_to_pseudo_label_folder, images_names_list):
+    """
+    Creates segmentation masks (pseudo labels) from predictions. For FDA, we create a segmentation mask from the mean of M model (M: number of segmentation models)
+
+    predictions_list: EITHER list of torch.tensor containing the model's class prediction of each pixel in the image OR list of M lists of torch.tensor (this is the case if
+    we use the mean of M model predicitions)
+
+    """
+
+    image_list_index = 0
+    for i, prediction_dict in enumerate(list_of_predictions_dict):
+
+        # segmentation_mask_prediction_batch = prediction_dict["segmentation_mask_prediction"].unsqueeze(1).float().clone()
+        segmentation_mask_prediction_batch = prediction_dict["segmentation_mask_prediction"]
+        print(segmentation_mask_prediction_batch.size)
+        # m_t_batch = prediction_dict["m_t"].unsqueeze(1).float().clone()
+
+        for j in range(segmentation_mask_prediction_batch.size(0)):
+            
+            pseudo_mask_id = images_names_list[image_list_index]
+            save_image(segmentation_mask_prediction_batch[j], os.path.join(path_to_pseudo_label_folder, "pseudo_labels", f"{pseudo_mask_id}.png"))
+            # save_image(m_t_batch[j], os.path.join(path_to_pseudo_label_folder, "m_t", f"{pseudo_mask_id}.png"))
+            image_list_index += 1
+
 
 def main():
 
-    dm_vis_tsne = DataModuleSegmentation(path_to_train_source=wandb.config.path_to_train, path_to_train_target=wandb.config.path_to_train_target, domain_adaptation=wandb.config.domain_adaptation,
+    dm_predict = DataModuleSegmentation(path_to_train_source=wandb.config.path_to_train, path_to_train_target=wandb.config.path_to_train_target, domain_adaptation=wandb.config.domain_adaptation,
                                 use_cycle_gan_source=wandb.config.use_cycle_gan_source,
+                                path_to_predict=r"C:\Users\Lenna\Google Drive Streaming\My Drive\Master_Thesis\datasets\PolypDatasets\ETIS-LaribPolypDB",
                                 load_data_for_tsne=True,
                                 path_to_test=wandb.config.test_data_path, load_size=256,
                                 batch_size=wandb.config.batch_size, num_workers=wandb.config.num_workers)
 
-    # Put in the path to visualize tsne - here!
-    path_to_checkpoint_model = r"C:\Users\Lenna\Google Drive Streaming\My Drive\Master_Thesis\experiments\Pretraining_01_experiment_01\2022-12-31\Pretrain\model_typedilated_lr0.1_pretrained_ImageNetTrue_temperature_0.05\epoch=320-step=10914.ckpt"
-    
+
+    print("IMAGE LIST PREDICT INSIDE MAIN:", dm_predict.image_list_predict)
+
+    path_to_checkpoint_model = r"C:\Users\Lenna\Google Drive Streaming\My Drive\Master_Thesis\experiments\Models_to_create_qual_compare_in_results_chap\Baseline\epoch=129-step=4420.ckpt"
+
     checkpoint = torch.load(path_to_checkpoint_model, map_location=torch.device(wandb.config.device))
 
-    model = PreTrain(wandb.config)
+    # model = FineTune(wandb.config)
+
+    model = MainNetwork(wandb.config)
 
     model.load_state_dict(checkpoint["state_dict"])
 
     trainer = pl.Trainer(accelerator=wandb.config.device, devices=1, fast_dev_run=wandb.config.debug)
 
-    trainer.predict(model, dataloaders=dm_vis_tsne)
+    list_of_predictions_dict = trainer.predict(model, dataloaders=dm_predict)
 
+    create_pseudo_labels_from_list_of_predictions(list_of_predictions_dict,
+     r"C:\Users\Lenna\Google Drive Streaming\My Drive\Master_Thesis\experiments\Models_to_create_qual_compare_in_results_chap\Baseline",
+     dm_predict.image_list_predict)
 
 
 if __name__ == "__main__":
@@ -63,6 +124,7 @@ if __name__ == "__main__":
     parser.add_argument("--use_pseudo_labels", type=bool, default=False, help="Set to true if you want to use pseudo_labels for train_target(valid) images - a subfolder to the train_target data with name pseudo_labels needs to excist")
     parser.add_argument("--use_confidence_threshold_m_t", type=bool, default=False, help="Set to true if you want to use m_t threshold maps for only using high confidence pixel embeddings for train_target(valid) images - a subfolder to the train_target data with name m_t needs to excist")
     parser.add_argument("--use_contr_head_for_tsne", type=bool, default=False, help="Set to true if the contr. head should be used on feat embeds before fed into tsne")
+    parser.add_argument("--use_cycle_gan_source", type=bool, default=False, help="Set to true if you want to use cycle GAN as the style transfer head")
 
 
     parser.add_argument("--domain_adaptation", action='store_true', help="If set, domain adaptation is used (a target dataset for training is loaded in data.py)")
@@ -72,15 +134,19 @@ if __name__ == "__main__":
     parser.add_argument("--num_workers", default=2, type=int, help="num worker for dataloader")
 
 
+    parser.add_argument("--pretrained_ImageNet", type=bool, default=False, help="If a pretrained ResNet on IMAGENET is used")
+    parser.add_argument("--start_epoch_for_self_learning", default=0, type=int, help="If use_self_learning is true, this is set ")
+    parser.add_argument("--use_confidence_threshold", type=bool, default=False, help="Set to True if you want to use m_t mask to calculate the ce loss for the target data using pseudo masks with confidence")
+
+
     # Arguments for model and training settings
     parser.add_argument("--model_type", type=str, choices=["normal", "dilated"] , help="What type of backbone is used, either normal or dilated ResNet18")
-    parser.add_argument("--pretrained_ImageNet", type=bool, default=True, help="If a pretrained ResNet on IMAGENET is used")
     parser.add_argument("--apply_FDA", type=bool, default=False, help="Set to True explicitly if you want to use FDA as style transfer step")
     
     # Special Arguments for joint training 
     parser.add_argument("--use_self_learning", type=bool, default=False, help="Set to True explicitly if you want to use self-learning with pseudo target labels")
     parser.add_argument("--ssl_threshold", type=float, default=0.9, help="Threshold confidence value to create pseudo labels")
-    parser.add_argument("--use_target_for_contr", type=bool, default=True, help="Set to True explicitly if you want to use target features for contr. loss")
+    parser.add_argument("--use_target_for_contr", type=bool, default=False, help="Set to True explicitly if you want to use target features for contr. loss")
     
     parser.add_argument("--contr_head_type", type=str, default="no_contr_head", choices=["no_contr_head", "contr_head_1"], help="which type of contr head is used to create the feature vector fead into contrastive loss")
     # parser.add_argument("--using_full_decoder", action='store_true', help="If true a normal encoder is used (encoding to original seg mask size, if false no normal encoder is used")

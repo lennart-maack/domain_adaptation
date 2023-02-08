@@ -110,7 +110,7 @@ class DataModuleSegmentation(pl.LightningDataModule):
 
         self.num_workers = num_workers
         if self.path_to_predict is not None:
-            self.image_list_predict, self.mask_list_predict = get_img_mask_list(self.path_to_predict, "valid")
+            self.image_list_predict, self.mask_list_predict = get_img_mask_list(self.path_to_predict, "test")
 
 
     def setup(self, stage=None):
@@ -139,7 +139,7 @@ class DataModuleSegmentation(pl.LightningDataModule):
 
             # setup target data
             self.train_data_target = CustomDataset(image_list=image_list_train_target, mask_list=mask_list_train_target, path=self.path_to_train_target, 
-                                                   use_pseudo_labels=self.use_pseudo_labels, transfo_for_train=True, load_size=self.load_size)
+                                                   use_pseudo_labels=self.use_pseudo_labels, transfo_for_train=False, load_size=self.load_size)
         
             if self.use_cycle_gan_source:
                 self.train_data_source_cycle_gan = CustomDataset(image_list=image_list_train_source, mask_list=mask_list_train_source, path=self.path_to_train_source,
@@ -213,13 +213,14 @@ class DataModuleSegmentation(pl.LightningDataModule):
     def predict_dataloader(self):
 
         if self.load_data_for_tsne:
-            loader_source = data.DataLoader(self.val_data_source, shuffle=True, batch_size=self.batch_size, num_workers=self.num_workers)
-            loader_target_val = data.DataLoader(self.train_data_target, shuffle=True, batch_size=self.batch_size, num_workers=self.num_workers)
+            loader_source = data.DataLoader(self.val_data_source, shuffle=False, batch_size=self.batch_size, num_workers=self.num_workers)
+            loader_target_val = data.DataLoader(self.train_data_target, shuffle=False, batch_size=self.batch_size, num_workers=self.num_workers)
+            loader_predict_data = data.DataLoader(self.predict_data, batch_size=self.batch_size, shuffle=False, num_workers=self.num_workers)
             if self.use_cycle_gan_source:
-                    loader_source_cycle_gan = data.DataLoader(self.train_data_source_cycle_gan, batch_size=self.batch_size, shuffle=True, num_workers=self.num_workers, drop_last=True)
+                    loader_source_cycle_gan = data.DataLoader(self.train_data_source_cycle_gan, batch_size=self.batch_size, shuffle=False, num_workers=self.num_workers, drop_last=True)
                     loaders = CombinedLoader({"loader_val_source": loader_source, "loader_target_val": loader_target_val, "batch_cycle_gan_source_val": loader_source_cycle_gan}, mode="max_size_cycle")
             else:
-                loaders = CombinedLoader({"loader_val_source": loader_source, "loader_target_val": loader_target_val}, mode="max_size_cycle")
+                loaders = CombinedLoader({"loader_val_source": loader_source, "loader_target_val": loader_target_val, "loader_predict_data": loader_predict_data }, mode="max_size_cycle")
             
             return loaders
 

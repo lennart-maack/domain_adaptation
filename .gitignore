@@ -11,3 +11,9 @@ helper.ipynb
 *.ipynb
 
 *.json
+
+*.yaml
+
+*.wandb
+
+other_SOTAs/basic_UNet/wandb

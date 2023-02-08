@@ -67,13 +67,13 @@ if __name__ == "__main__":
     parser.add_argument("--num_workers", default=2, type=int, help="num worker for dataloader")
 
 
-    parser.add_argument("--pretrained_ImageNet", type=bool, default=True, help="If a pretrained ResNet on IMAGENET is used")
+    parser.add_argument("--pretrained_ImageNet", type=bool, default=False, help="If a pretrained ResNet on IMAGENET is used")
     parser.add_argument("--use_self_learning", type=bool, default=False, help="Set to True explicitly if you want to use self-learning with pseudo target labels")
     parser.add_argument("--start_epoch_for_self_learning", default=0, type=int, help="If use_self_learning is true, this is set ")
     parser.add_argument("--ssl_threshold", type=float, default=0.9, help="Threshold confidence value to create pseudo labels")
-    parser.add_argument("--use_target_for_contr", type=bool, default=True, help="Set to True explicitly if you want to use target features for contr. loss")
+    parser.add_argument("--use_target_for_contr", type=bool, default=False, help="Set to True explicitly if you want to use target features for contr. loss")
     parser.add_argument("--contrastive_lambda", type=float, default=1.0, help="Coefficient used for the contrastive loss in the overall loss")
-    parser.add_argument("--use_confidence_threshold", type=bool, default=True, help="Set to True if you want to use m_t mask to calculate the ce loss for the target data using pseudo masks with confidence")
+    parser.add_argument("--use_confidence_threshold", type=bool, default=False, help="Set to True if you want to use m_t mask to calculate the ce loss for the target data using pseudo masks with confidence")
     
 
     # Arguments for model and training settings

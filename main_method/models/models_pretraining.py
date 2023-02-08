@@ -29,7 +29,7 @@ import os
 import sys
 # Enable module loading from parentfolder
 sys.path.insert(1, os.path.join(sys.path[0], '..'))
-from other_domain_adapt_methods.utils.FFT import FDA_source_to_target
+from Baseline_and_FDA.utils.FFT import FDA_source_to_target
 
 
 def visualize_feature_embedding_torch(feature_embedding, feature_embed_prop, idx):
@@ -475,20 +475,20 @@ class PreTrain(pl.LightningModule):
 
             batch_target_val = batch["loader_target_val"]
             if self.use_pseudo_labels:
-                img_target, pseudo_label_target, _ = batch_target_val
+                img_target, pseudo_label_target, mask_target = batch_target_val
                 feature_embedding_val_trgt = self(img_target)
 
             else:
                 pseudo_label_target = None
-                feature_embedding_val_trgt=None
-                img_target, _ = batch_target_val
+                img_target, mask_target = batch_target_val
+                feature_embedding_val_trgt = self(img_target)
 
             if self.apply_FDA and not self.use_cycle_gan_source:
                 img_src_in_trg = FDA_source_to_target(img_val_src, img_target, L=0.01)
                 feature_embedding_val_src_in_trgt = self(img_src_in_trg)
 
             elif self.use_cycle_gan_source and not self.apply_FDA:
-
+                print("Use cycle GAN for predicting/creating tsne")
                 batch_source_to_target_cycle = batch["batch_cycle_gan_source_val"]
                 img_val_src_in_trgt_cycle, _ = batch_source_to_target_cycle
                 feature_embedding_val_src_in_trgt = self(img_val_src_in_trgt_cycle)
@@ -498,7 +498,7 @@ class PreTrain(pl.LightningModule):
 
 
             self._visualize_tsne(feature_embedding_val_src, feature_embedding_val_src_in_trgt, mask_val_src, 
-                                feature_embedding_val_trgt, pseudo_label_target=pseudo_label_target, perplexity=50)
+                                feature_embedding_val_trgt, mask_val_target=mask_target, perplexity=30)
 
         return
 
@@ -570,7 +570,7 @@ class PreTrain(pl.LightningModule):
 
 
     def _visualize_tsne(self, feature_embedding_val_src, feature_embedding_val_src_in_trgt, mask_val_src, 
-                                feature_embedding_val_trgt=None, pseudo_label_target=None,
+                                feature_embedding_val_trgt=None, mask_val_target=None,
                                 pca_n_comp=50, perplexity=30):
 
         mask_val_src = mask_val_src.unsqueeze(1).float().clone()
@@ -578,20 +578,18 @@ class PreTrain(pl.LightningModule):
                                                     (feature_embedding_val_src.shape[2], feature_embedding_val_src.shape[3]), mode='nearest')
         mask_val_src = mask_val_src.squeeze(1).long()
 
-        if pseudo_label_target is not None:
+        if mask_val_target is not None:
             
             if self.use_contr_head_for_tsne:
-                feature_embedding_val_src, feature_embedding_val_src_in_trgt, feature_embedding_val_trgt = self._get_contr_feat_embeds(feature_embedding_val_src, 
-                                                                                                                                                feature_embedding_val_src_in_trgt, 
-                                                                                                                                                feature_embedding_val_trgt)
+                feature_embedding_val_src, feature_embedding_val_src_in_trgt, feature_embedding_val_trgt = self._get_contr_feat_embeds(feature_embedding_val_src, feature_embedding_val_src_in_trgt, feature_embedding_val_trgt)
 
-            pseudo_label_target = pseudo_label_target.unsqueeze(1).float().clone()
-            pseudo_label_target = torch.nn.functional.interpolate(pseudo_label_target,
+            mask_val_target = mask_val_target.unsqueeze(1).float().clone()
+            mask_val_target = torch.nn.functional.interpolate(mask_val_target,
                                                     (feature_embedding_val_src.shape[2], feature_embedding_val_src.shape[3]), mode='nearest')
-            pseudo_label_target = pseudo_label_target.squeeze(1).long()
+            mask_val_target = mask_val_target.squeeze(1).long()
             concat_feature_embeds = torch.tensor([feature_embedding_val_src.cpu().numpy(), feature_embedding_val_src_in_trgt.cpu().numpy(), 
                                                 feature_embedding_val_trgt.cpu().numpy()])
-            concat_labels = torch.tensor([mask_val_src.cpu().numpy(), mask_val_src.cpu().numpy(), pseudo_label_target.cpu().numpy()])
+            concat_labels = torch.tensor([mask_val_src.cpu().numpy(), mask_val_src.cpu().numpy(), mask_val_target.cpu().numpy()])
             df_tsne = create_tsne(concat_feature_embeds, concat_labels, pca_n_comp=pca_n_comp, perplexity=perplexity)
 
             df_tsne = self._clean_up_tsne(df_tsne, with_target_data=True)

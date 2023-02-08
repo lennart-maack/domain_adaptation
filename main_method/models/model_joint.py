@@ -28,7 +28,7 @@ import os
 import sys
 # Enable module loading from parentfolder
 sys.path.insert(1, os.path.join(sys.path[0], '..'))
-from other_domain_adapt_methods.utils.FFT import FDA_source_to_target
+from Baseline_and_FDA.utils.FFT import FDA_source_to_target
 
 
 def visualize_feature_embedding_torch(feature_embedding, feature_embed_prop, idx):
@@ -69,7 +69,7 @@ def convrelu(in_channels, out_channels, kernel, padding):
 
 
 class Dilated_Decoder(nn.Module):
-    def __init__(self, num_classes=2):
+    def __init__(self, num_classes=1):
         super().__init__()
 
         self.num_classes = num_classes
@@ -160,7 +160,7 @@ class Contrastive_Head(nn.Module):
 
 class Normal_Decoder(nn.Module):
 
-    def __init__(self, num_classes=2):
+    def __init__(self, num_classes=1):
         super().__init__()
 
         self.num_classes = num_classes
@@ -239,9 +239,13 @@ class MainNetwork(pl.LightningModule):
         self.contr_head_type = wandb_configs.contr_head_type
 
         self.learning_rate = wandb_configs.lr
-        self.seg_metric = Dice(num_classes=2, average="macro")
-        self.seg_metric_test = Dice(num_classes=2, average="macro")
-        self.seg_metric_test_during_val = Dice(num_classes=2, average="macro")
+        self.seg_metric = Dice()
+        self.seg_metric_test = Dice()
+        self.seg_metric_test_during_val = Dice()
+        self.criterion = nn.BCEWithLogitsLoss()
+        # self.seg_metric = Dice(num_classes=2, average="macro")
+        # self.seg_metric_test = Dice(num_classes=2, average="macro")
+        # self.seg_metric_test_during_val = Dice(num_classes=2, average="macro")
         self.cross_entropy_loss = torch.nn.CrossEntropyLoss()
         self.cross_entropy_loss_pseudo = torch.nn.CrossEntropyLoss(reduce=False)
         self.ssl_threshold = wandb_configs.ssl_threshold
@@ -496,6 +500,45 @@ class MainNetwork(pl.LightningModule):
         self.seg_metric_test.reset()
 
 
+    def predict_step(self, batch, batch_idx):
+        
+        # # THIS STEP IS USED TO VISUALIZE TSNE - USE visulize_tsne.py
+        # if batch_idx == 0:
+        
+        #     batch_val = batch["loader_val_source"]
+        #     img_val_src, mask_val_src = batch_val # mask.size(): [bs, 256, 256]
+            
+        #     segmentation_mask_prediction, feature_embedding_val_src = self(img_val_src)
+
+        #     batch_target_val = batch["loader_target_val"]
+            
+        #     img_target, mask_target = batch_target_val
+        #     segmentation_mask_prediction_target, feature_embedding_val_trgt = self(img_target)
+
+        #     if self.apply_FDA:
+        #         img_src_in_trg = FDA_source_to_target(img_val_src, img_target, L=0.01)
+        #         feature_embedding_val_src_in_trgt = self(img_src_in_trg)
+
+        #     #### THIS IS CHANGED TO VISUALIZE THE EMBEDDINGS OF SOURCE WITH GT AND TEST WITH GT
+            
+        #     self.visualize_tsne_src_trgt_only(feature_embedding_val_src, mask_val_src,
+        #                                       feature_embedding_val_trgt, mask_target)
+            
+        #     # self._visualize_tsne(feature_embedding_val_src, feature_embedding_val_src_in_trgt, mask_val_src, 
+        #     #                     feature_embedding_val_trgt, mask_val_target=mask_target, perplexity=30)
+
+        # return
+
+        batch_target_test = batch["loader_predict_data"]
+        img, mask = batch_target_test
+        segmentation_mask_prediction_out, _ = self(img)
+
+        segmentation_mask_prediction = torch.sigmoid(segmentation_mask_prediction_out)
+        segmentation_mask_prediction = torch.where(segmentation_mask_prediction > 0.5, 1, 0).float()
+
+        return {"segmentation_mask_prediction": segmentation_mask_prediction}
+
+
 
 
     def _calculate_FDA_loss_ent(self, image_target):
@@ -545,6 +588,50 @@ class MainNetwork(pl.LightningModule):
             contrastive_loss = self.sup_contr_loss(contrastive_embedding_src, mask_source, predictions)
 
         return contrastive_loss
+
+
+    def visualize_tsne_src_trgt_only(self, feature_embedding_val_src, mask_val_src, feature_embedding_val_trgt, mask_target,
+                                    pca_n_comp=50, perplexity=30):
+
+        mask_val_src = mask_val_src.unsqueeze(1).float().clone()
+        mask_val_src = torch.nn.functional.interpolate(mask_val_src,
+                                                    (feature_embedding_val_src.shape[2], feature_embedding_val_src.shape[3]), mode='nearest')
+        mask_val_src = mask_val_src.squeeze(1).long()
+
+        mask_target = mask_target.unsqueeze(1).float().clone()
+        mask_target = torch.nn.functional.interpolate(mask_target,
+                                                    (feature_embedding_val_src.shape[2], feature_embedding_val_src.shape[3]), mode='nearest')
+        mask_target = mask_target.squeeze(1).long()
+
+
+        if self.use_contr_head_for_tsne:
+            feature_embedding_val_src, feature_embedding_val_trgt= self._get_contr_feat_embeds(feature_embedding_val_src,
+                                                                                                                    feature_embedding_val_trgt)
+        print()
+        print("feature_embedding_val_src.size()", feature_embedding_val_src.size())
+        
+        print("feature_embedding_val_trgt.size()", feature_embedding_val_trgt.size())
+        
+        print("mask_val_src.size()", mask_val_src.size())
+        
+        print("mask_target.size()", mask_target.size())
+        print()
+
+        concat_feature_embeds = torch.tensor([feature_embedding_val_src.cpu().numpy(), feature_embedding_val_trgt.cpu().numpy()])
+        concat_labels = torch.tensor([mask_val_src.cpu().numpy(), mask_target.cpu().numpy()])
+        df_tsne = create_tsne(concat_feature_embeds, concat_labels, pca_n_comp=pca_n_comp, perplexity=perplexity)
+        
+        df_tsne = self._clean_up_tsne(df_tsne, with_target_data=False)
+
+
+        fig = plt.figure(figsize=(10,10))
+        sns_plot = sns.scatterplot(x="tsne-one", y="tsne-two", hue="Domain", style="Background", palette="deep", data=df_tsne)
+        fig = sns_plot.get_figure()
+        fig.savefig(f"tSNE_vis_perplex_{perplexity}.jpg")
+        tsne_img = cv2.imread(f"tSNE_vis_perplex_{perplexity}.jpg")
+        tSNE_image = wandb.Image(PIL.Image.fromarray(tsne_img))
+
+        wandb.log({f"tSNE visualization perplex {perplexity}": tSNE_image})
 
 
     def _visualize_tsne(self, feature_embedding_val_src, feature_embedding_val_src_in_trgt, mask_val_src, 
@@ -598,101 +685,104 @@ class MainNetwork(pl.LightningModule):
 
     def _get_contr_feat_embeds(self, feature_embedding_val_src, feature_embedding_val_src_in_trgt, feature_embedding_val_trgt=None):
 
-            if feature_embedding_val_trgt is not None:
+        if feature_embedding_val_trgt is not None:
 
-                concat_feats = torch.concat([feature_embedding_val_src, feature_embedding_val_src_in_trgt, feature_embedding_val_trgt], dim=0)
-                concat_contrastive_embedding = self.contr_head(concat_feats)
+            concat_feats = torch.concat([feature_embedding_val_src, feature_embedding_val_src_in_trgt, feature_embedding_val_trgt], dim=0)
+            concat_contrastive_embedding = self.contr_head(concat_feats)
 
-                length_concat_contrastive_embedding = concat_contrastive_embedding.size(0)
-                a_end_id = int(length_concat_contrastive_embedding/3)
-                b_end_id = int(length_concat_contrastive_embedding/3 * 2)
-                c_end_id = int(length_concat_contrastive_embedding/3 * 3)
-                contr_feature_embedding_val_src = concat_contrastive_embedding[:a_end_id]
-                contr_feature_embedding_val_src_in_trgt = concat_contrastive_embedding[a_end_id:b_end_id]
-                contr_feature_embedding_val_trgt = concat_contrastive_embedding[b_end_id:c_end_id]
+            length_concat_contrastive_embedding = concat_contrastive_embedding.size(0)
+            a_end_id = int(length_concat_contrastive_embedding/3)
+            b_end_id = int(length_concat_contrastive_embedding/3 * 2)
+            c_end_id = int(length_concat_contrastive_embedding/3 * 3)
+            contr_feature_embedding_val_src = concat_contrastive_embedding[:a_end_id]
+            contr_feature_embedding_val_src_in_trgt = concat_contrastive_embedding[a_end_id:b_end_id]
+            contr_feature_embedding_val_trgt = concat_contrastive_embedding[b_end_id:c_end_id]
 
-                return contr_feature_embedding_val_src, contr_feature_embedding_val_src_in_trgt, contr_feature_embedding_val_trgt
-            else:
+            return contr_feature_embedding_val_src, contr_feature_embedding_val_src_in_trgt, contr_feature_embedding_val_trgt
+        else:
 
-                concat_feats = torch.concat([feature_embedding_val_src, feature_embedding_val_src_in_trgt], dim=0)
-                concat_contrastive_embedding = self.contr_head(concat_feats)
+            concat_feats = torch.concat([feature_embedding_val_src, feature_embedding_val_src_in_trgt], dim=0)
+            concat_contrastive_embedding = self.contr_head(concat_feats)
 
-                length_concat_contrastive_embedding = concat_contrastive_embedding.size(0)
-                a_end_id = int(length_concat_contrastive_embedding/2)
-                b_end_id = int(length_concat_contrastive_embedding/2 * 2)
-                contr_feature_embedding_val_src = concat_contrastive_embedding[:a_end_id]
-                contr_feature_embedding_val_src_in_trgt = concat_contrastive_embedding[a_end_id:b_end_id]
+            length_concat_contrastive_embedding = concat_contrastive_embedding.size(0)
+            a_end_id = int(length_concat_contrastive_embedding/2)
+            b_end_id = int(length_concat_contrastive_embedding/2 * 2)
+            contr_feature_embedding_val_src = concat_contrastive_embedding[:a_end_id]
+            contr_feature_embedding_val_src_in_trgt = concat_contrastive_embedding[a_end_id:b_end_id]
 
-                return contr_feature_embedding_val_src, contr_feature_embedding_val_src_in_trgt
-
+            return contr_feature_embedding_val_src, contr_feature_embedding_val_src_in_trgt
 
     def _clean_up_tsne(self, df_tsne, with_target_data=False):
 
-            if with_target_data:
+        if with_target_data:
 
-                df_tsne.loc[((df_tsne['label'] == 0) | (df_tsne['label'] == 1), 'Domain')] = "Source"
-                df_tsne.loc[((df_tsne['label'] == 2) | (df_tsne['label'] == 3), 'Domain')] = "Source To Target"
-                df_tsne.loc[((df_tsne['label'] == 4) | (df_tsne['label'] == 5), 'Domain')] = "Target"
-                df_tsne["Background"] = np.where((df_tsne['label'] == 0) | (df_tsne['label'] == 2) | (df_tsne['label'] == 4) , "Background", "Polyp")
+            df_tsne.loc[((df_tsne['label'] == 0) | (df_tsne['label'] == 1), 'Domain')] = "Source"
+            df_tsne.loc[((df_tsne['label'] == 2) | (df_tsne['label'] == 3), 'Domain')] = "Source To Target"
+            df_tsne.loc[((df_tsne['label'] == 4) | (df_tsne['label'] == 5), 'Domain')] = "Target"
+            df_tsne["Background"] = np.where((df_tsne['label'] == 0) | (df_tsne['label'] == 2) | (df_tsne['label'] == 4) , "Background", "Polyp")
 
-                df_new = df_tsne
-                print(df_new['label'].value_counts())
-                df_back = df_new.loc[(df_new['label'] == 0) | (df_new['label'] == 2) | (df_new['label'] == 4)]
+            df_minimized_backs = df_tsne
 
-                np.random.seed(10)
-                
-                num_polyps = len(df_new.loc[(df_new['label'] == 1)].index) + len(df_new.loc[(df_new['label'] == 1)].index) + len(df_new.loc[(df_new['label'] == 5)].index)
-                num_backs = len(df_new.loc[(df_new['label'] == 0)].index) + len(df_new.loc[(df_new['label'] == 0)].index) + len(df_new.loc[(df_new['label'] == 4)].index)
-                remove_n = num_backs - num_polyps - 500
+            # df_new = df_tsne
+            # print(df_new['label'].value_counts())
+            # df_back = df_new.loc[(df_new['label'] == 0) | (df_new['label'] == 2) | (df_new['label'] == 4)]
 
-                drop_indices_back = np.random.choice(df_back.index, remove_n, replace=False)
-                df_minimized_backs = df_new.drop(drop_indices_back)
+            # np.random.seed(10)
+            
+            # num_polyps = len(df_new.loc[(df_new['label'] == 1)].index) + len(df_new.loc[(df_new['label'] == 1)].index) + len(df_new.loc[(df_new['label'] == 5)].index)
+            # num_backs = len(df_new.loc[(df_new['label'] == 0)].index) + len(df_new.loc[(df_new['label'] == 0)].index) + len(df_new.loc[(df_new['label'] == 4)].index)
+            # remove_n = num_backs - num_polyps - 500
 
-                ### Minimize amount of polyp sourceToTarget
-                num_src_to_trgt_to_cut = int(len(df_new.loc[(df_new['label'] == 3)]) * 0.66)
-                drop_indices_src_to_trgt_polyp = np.random.choice(df_new.loc[(df_new['label'] == 3)].index, num_src_to_trgt_to_cut, replace=False)
-                df_minimized_backs = df_minimized_backs.drop(drop_indices_src_to_trgt_polyp)
-                ###
+            # drop_indices_back = np.random.choice(df_back.index, remove_n, replace=False)
+            # df_minimized_backs = df_new.drop(drop_indices_back)
 
-                print(df_minimized_backs['label'].value_counts())
+            # ### Minimize amount of polyp sourceToTarget
+            # num_src_to_trgt_to_cut = int(len(df_new.loc[(df_new['label'] == 3)]) * 0.66)
+            # drop_indices_src_to_trgt_polyp = np.random.choice(df_new.loc[(df_new['label'] == 3)].index, num_src_to_trgt_to_cut, replace=False)
+            # df_minimized_backs = df_minimized_backs.drop(drop_indices_src_to_trgt_polyp)
+            # ###
 
-                return df_minimized_backs
+            print(df_minimized_backs['label'].value_counts())
 
-            else:
+            return df_minimized_backs
 
-                df_tsne.loc[((df_tsne['label'] == 0) | (df_tsne['label'] == 1), 'Domain')] = "Source"
-                df_tsne.loc[((df_tsne['label'] == 2) | (df_tsne['label'] == 3), 'Domain')] = "Source To Target"
-                df_tsne["Background"] = np.where((df_tsne['label'] == 0) | (df_tsne['label'] == 2) , "Background", "Polyp")
+        else:
 
-                df_tsne['label'] = df_tsne['label'].replace(0,'src - back')
-                df_tsne['label'] = df_tsne['label'].replace(1,'src - polyp')
-                df_tsne['label'] = df_tsne['label'].replace(2,'src to trgt - back')
-                df_tsne['label'] = df_tsne['label'].replace(3,'src to trgt - polyp')
-                
-                df_new = df_tsne
-                print(df_new['label'].value_counts())
-                df_back = df_new.loc[(df_new['label'] == "src - back") | (df_new['label'] == "src to trgt - back")]
+            df_tsne.loc[((df_tsne['label'] == 0) | (df_tsne['label'] == 1), 'Domain')] = "Source"
+            df_tsne.loc[((df_tsne['label'] == 2) | (df_tsne['label'] == 3), 'Domain')] = "Target"
+            df_tsne["Background"] = np.where((df_tsne['label'] == 0) | (df_tsne['label'] == 2) , "Background", "Polyp")
 
-                np.random.seed(10)
-                
-                num_polyps = len(df_new.loc[(df_new['label'] == "src - polyp")].index) + len(df_new.loc[(df_new['label'] == "src - polyp")].index)
-                num_backs = len(df_new.loc[(df_new['label'] == "src - back")].index) + len(df_new.loc[(df_new['label'] == "src - back")].index)
-                remove_n = num_backs - num_polyps - 500
+            df_tsne['label'] = df_tsne['label'].replace(0,'src - back')
+            df_tsne['label'] = df_tsne['label'].replace(1,'src - polyp')
+            df_tsne['label'] = df_tsne['label'].replace(2,'trgt - back')
+            df_tsne['label'] = df_tsne['label'].replace(3,'trgt - polyp')
+            
 
-                drop_indices_back = np.random.choice(df_back.index, remove_n, replace=False)
-                df_minimized_backs = df_new.drop(drop_indices_back)
+            df_minimized_backs = df_tsne
 
-                ### Minimize amount of polyp sourceToTarget
-                num_src_to_trgt_to_cut = int(len(df_new.loc[(df_new['label'] == "src to trgt - polyp")]) * 0.66)
-                drop_indices_src_to_trgt_polyp = np.random.choice(df_new.loc[(df_new['label'] == "src to trgt - polyp")].index, num_src_to_trgt_to_cut, replace=False)
-                df_minimized_backs = df_minimized_backs.drop(drop_indices_src_to_trgt_polyp)
-                ###
+            df_new = df_tsne
+            print(df_new['label'].value_counts())
+            df_back = df_new.loc[(df_new['label'] == "src - back") | (df_new['label'] == "trgt - back")]
+
+            np.random.seed(10)
+            
+            num_polyps = len(df_new.loc[(df_new['label'] == "src - polyp")].index) + len(df_new.loc[(df_new['label'] == "src - polyp")].index)
+            num_backs = len(df_new.loc[(df_new['label'] == "src - back")].index) + len(df_new.loc[(df_new['label'] == "src - back")].index)
+            remove_n = num_backs - num_polyps - 500
+
+            drop_indices_back = np.random.choice(df_back.index, remove_n, replace=False)
+            df_minimized_backs = df_new.drop(drop_indices_back)
+
+            # ### Minimize amount of polyp sourceToTarget
+            # num_src_to_trgt_to_cut = int(len(df_new.loc[(df_new['label'] == "trgt - polyp")]) * 0.66)
+            # drop_indices_src_to_trgt_polyp = np.random.choice(df_new.loc[(df_new['label'] == "trgt - polyp")].index, num_src_to_trgt_to_cut, replace=False)
+            # df_minimized_backs = df_minimized_backs.drop(drop_indices_src_to_trgt_polyp)
+            # ###
 
 
-                print(df_minimized_backs['label'].value_counts())
+            print(df_minimized_backs['label'].value_counts())
 
-                return df_minimized_backs
-
+            return df_minimized_backs
 
     def _visualize_plots(self, mask_val, segmentation_mask_prediction_val, img_val):
 
