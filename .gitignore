@@ -9,3 +9,5 @@ helper.ipynb
 /.conda
 
 *.ipynb
+
+*.json
