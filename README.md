@@ -1,11 +1,17 @@
 # domain_adaptation
 
-Repository for domain adaptation. 
+Repository for "Unsupervised Domain Adaptation for Colon Polyp Segmentation using Pixel Level Contrastive Learning." 
 
-This repository contains:
-1. "main_method" folder with new domain adaptation approach using contrastive learning
-2. "other_domain_adapt_methods" folder with SOTA methods for domain adaptation
-3. "basic_UNet" folder with baseline segmentation networks, such as UNet, UNet with ResNet18 backbone, DeepLabv3
+This repository contains the code for:
+1. Pretraining with supervised pixel contrastive learning (train_pretrain_mode.py)
+2. Finetuning after contrastive pretraining (train_joint_mode.py)
+3. Joint training using supervised pixel contrastive loss and pixel cross entropy loss (train_joint_mode.py)
+4. Other state-of-the-art methods (refer to folder other_SOTAs):
+    1. U-Net baseline (basic_UNet)
+    2. Domain Adaptation Neural Network (DANN)
+    3. Fourier Domain Adaptation method (FDA)
+    4. Contrastive Fourier Domain Adaptation (CoFo)
+    5. Mutual Prototype Alignment for Domain Adaptation (MPA-DA)
 
 
 ## Installation
@@ -21,12 +27,6 @@ Run the following command to install all needed requirements. At best, create a 
 ```
 pip install -r requirements.txt
 ```
-
-If you experience the error "ImportError: DLL load failed while importing _iterative: %1 is not a valid Win32 application." run the following
-```
-pip install --upgrade --force-reinstall scipy
-```
-
 
 ## Dataset
 
@@ -44,25 +44,10 @@ dataset/
         ...
 ```
 
-## Train a Network
+## Train the proposed framework
 
-To train a Network, the train.py file reads the arguments.json file for setting parameters.
-The parameters are described in the corresponding train.py (or train_UNet.py in /basic_UNet).
+To train a Network, use the train_pretrain_mode.py, train_finetune_mode.py or train_joint_mode.py file with the corresponding arguments. Details about usable arguments can be found in each of the three files.
 
-To start training with the main_method, set the arguments.json and execute the following:
+## Train a state-of-the-art method
 
-```
-python "/path/to/train.py" --load_json "/path/to/parameters.json" 
-```
-
-### Train a UNet
-
-If you want to train a UNet or UNet with ResNet18 backbone, there are two ways.
-
-1. Use basic_UNet/train_UNet.py and set the corresponding parameters in arguments_UNet.json (model_type, num_classes etc.)
-
-```
-python "/path/to/train_UNet.py" --load_json "/path/to/arguments_UNet.json" 
-```
-
-2. You could also use train.py and set the following parameters (model_type: "normal", coarse_prediction_type: "no_coarse", contr_head_type: "no_contr_head", using_full_decoder: true)
+Refer to the README of the corresponding SOTA method folder. 
